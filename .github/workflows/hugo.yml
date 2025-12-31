@@ -35,7 +35,7 @@ jobs:
 
       # 3. Setup Hugo Extended
       - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v4
+        uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: '0.153.5'
           extended: true
