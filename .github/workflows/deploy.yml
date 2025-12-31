@@ -48,8 +48,8 @@ jobs:
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
-          publish_branch: gh-pages
           # 使用 token 自动推送
           user_name: "Ysoseri1224"
           user_email: "zwei974@aucklanduni.ac.nz"
