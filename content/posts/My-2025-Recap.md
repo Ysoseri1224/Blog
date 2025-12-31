@@ -7,3 +7,7 @@ categories: ["Hugo"]
 ---
 
 这里写正文，用 Markdown 语法。
+
+## 我草了workflow能不能别再报错了
+
+yarn.lock也有了，别再报错了呗
