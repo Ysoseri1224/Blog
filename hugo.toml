@@ -1,5 +1,9 @@
-baseURL = 'https://github.com/Ysoseri1224/Blog/'
-languageCode = 'zh-cn'
-title = 'My Blog'
-theme = ["PaperMod"]
+baseURL = "https://ysoseri1224.github.io/Blog/"
+title = "My Hugo Blog"
+theme = "PaperMod"
 
+[params]
+  author = "Ysoseri1224"
+  dateFormat = "2006-01-02"
+  highlightStyle = "monokai"
+  pygmentsUseClasses = true
