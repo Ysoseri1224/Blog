@@ -1,0 +1,55 @@
+name: Build and Deploy Hugo Blog
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 2. Setup Node + Yarn
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install Yarn dependencies
+        run: yarn install --frozen-lockfile
+
+      # 3. Setup Hugo Extended
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: '0.153.5'
+          extended: true
+
+      # 4. Build Hugo site
+      - name: Build site
+        run: hugo --minify
+
+      # 5. Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          publish_dir: ./public
+          publish_branch: gh-pages
+          # 使用 token 自动推送
+          user_name: "Ysoseri1224"
+          user_email: "zwei974@aucklanduni.ac.nz"
