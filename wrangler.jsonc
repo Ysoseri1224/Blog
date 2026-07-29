@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ysoseri-blog",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    { "pattern": "blog.ysoseri.us", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "CONTENT_DB",
+      "database_name": "blog-content",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations/content"
+    },
+    {
+      "binding": "SEARCH_DB",
+      "database_name": "blog-search",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "migrations/search"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "BLOG_ARCHIVE", "bucket_name": "blog-archive" },
+    { "binding": "SITE_MEDIA", "bucket_name": "ysoseri-media" },
+    { "binding": "BLOG_BACKUPS", "bucket_name": "blog-backups" }
+  ],
+  "workflows": [
+    { "binding": "BLOG_BACKUP_WORKFLOW", "name": "blog-backup", "class_name": "BlogBackupWorkflow" }
+  ],
+  "triggers": { "crons": ["*/5 * * * *", "0 3 * * *"] },
+  "vars": {
+    "SITE_ORIGIN": "https://blog.ysoseri.us",
+    "DEFAULT_TIMEZONE": "Pacific/Auckland",
+    "SESSION_DAYS": "30",
+    "BACKUP_RETENTION_DAYS": "UNCONFIRMED"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}

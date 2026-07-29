@@ -1,0 +1,4 @@
+# 仅作格式说明；不要在这里填写真实密码或 Token。
+# 使用 scripts/hash-password.mjs 生成 PBKDF2 密码摘要后，写入未跟踪的 .dev.vars。
+AUTH_PASSWORD_HASH=pbkdf2$210000$<salt-hex>$<hash-hex>
+IMPORT_EXPORT_SIGNING_KEY=<至少 32 字节的随机 Base64URL 密钥>

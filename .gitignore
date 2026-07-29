@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.wrangler/
+.wrangler-logs/
+.dev.vars
+.env
+coverage/
+playwright-report/
+test-results/

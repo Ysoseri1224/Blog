@@ -1,15 +1,24 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>blog · ysoseri.us</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#faf8f5;color:#3d2e1f}
-@media(prefers-color-scheme:dark){body{background:#1c1713;color:#f0ebe5}}
-p{font-size:1.25rem;opacity:.6}
-</style>
-</head>
-<body><p>待装修</p></body>
+<!doctype html>
+<html lang="zh" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f0e8" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/geist-variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/instrument-serif-regular.woff2" as="font" type="font/woff2" crossorigin />
+    <title>Blog · ysoseri.us</title>
+    <script>
+      (() => {
+        const saved = localStorage.getItem('blog-theme');
+        const system = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = saved || system;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"><div class="boot-fallback" role="status">正在打开写作空间…</div></div>
+    <script type="module" src="/src/client/main.tsx"></script>
+  </body>
 </html>

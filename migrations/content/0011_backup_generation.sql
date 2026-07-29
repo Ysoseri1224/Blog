@@ -1,0 +1,51 @@
+CREATE TABLE backup_clock (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  generation INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO backup_clock (id,generation) VALUES (1,0);
+
+CREATE TRIGGER repositories_backup_insert AFTER INSERT ON repositories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER repositories_backup_update AFTER UPDATE ON repositories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER repositories_backup_delete AFTER DELETE ON repositories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER categories_backup_insert AFTER INSERT ON categories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER categories_backup_update AFTER UPDATE ON categories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER categories_backup_delete AFTER DELETE ON categories BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER posts_backup_insert AFTER INSERT ON posts BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER posts_backup_update AFTER UPDATE ON posts BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER posts_backup_delete AFTER DELETE ON posts BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER tags_backup_insert AFTER INSERT ON tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER tags_backup_update AFTER UPDATE ON tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER tags_backup_delete AFTER DELETE ON tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_tags_backup_insert AFTER INSERT ON post_tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_tags_backup_update AFTER UPDATE ON post_tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_tags_backup_delete AFTER DELETE ON post_tags BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_links_backup_insert AFTER INSERT ON post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_links_backup_update AFTER UPDATE ON post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_links_backup_delete AFTER DELETE ON post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_versions_backup_insert AFTER INSERT ON post_versions BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_versions_backup_update AFTER UPDATE ON post_versions BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_versions_backup_delete AFTER DELETE ON post_versions BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshots_backup_insert AFTER INSERT ON public_snapshots BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshots_backup_update AFTER UPDATE ON public_snapshots BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshots_backup_delete AFTER DELETE ON public_snapshots BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER redirects_backup_insert AFTER INSERT ON redirects BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER redirects_backup_update AFTER UPDATE ON redirects BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER redirects_backup_delete AFTER DELETE ON redirects BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER media_assets_backup_insert AFTER INSERT ON media_assets BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER media_assets_backup_update AFTER UPDATE ON media_assets BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER media_assets_backup_delete AFTER DELETE ON media_assets BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_media_backup_insert AFTER INSERT ON post_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_media_backup_update AFTER UPDATE ON post_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER post_media_backup_delete AFTER DELETE ON post_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshot_media_backup_insert AFTER INSERT ON public_snapshot_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshot_media_backup_update AFTER UPDATE ON public_snapshot_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_snapshot_media_backup_delete AFTER DELETE ON public_snapshot_media BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER settings_backup_insert AFTER INSERT ON settings BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER settings_backup_update AFTER UPDATE ON settings BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER settings_backup_delete AFTER DELETE ON settings BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_post_links_backup_insert AFTER INSERT ON public_post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_post_links_backup_update AFTER UPDATE ON public_post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER public_post_links_backup_delete AFTER DELETE ON public_post_links BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER deleted_urls_backup_insert AFTER INSERT ON deleted_urls BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER deleted_urls_backup_update AFTER UPDATE ON deleted_urls BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
+CREATE TRIGGER deleted_urls_backup_delete AFTER DELETE ON deleted_urls BEGIN UPDATE backup_clock SET generation=generation+1 WHERE id=1; END;
