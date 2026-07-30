@@ -818,8 +818,12 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
     setSaveState("local");
     setTimeout(() => void saveNowRef.current(), 0);
   };
+  const leaveManagement = async (href: string) => {
+    if (postRef.current && !(await saveNow())) return;
+    location.assign(href);
+  };
   const logoutNow = async () => {
-    await saveNow();
+    if (postRef.current && !(await saveNow())) return;
     await api("/api/auth/logout", { method: "POST" }, csrf);
     location.href = "/manage";
   };
@@ -1045,6 +1049,16 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
           .toLocaleLowerCase()
           .includes(normalizedPostQuery),
     ) ?? [];
+  const publicRepository = post
+    ? repositories.find((repository) => repository.id === post.repositoryId)
+    : null;
+  const publicPostHref = post
+    && post.publicRevision !== null
+    && post.status !== "withdrawn"
+    && publicRepository
+    && post.slug
+    ? `/${publicRepository.key}/${post.slug}`
+    : null;
 
   return (
     <div
@@ -1052,7 +1066,7 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
       data-sidebar-collapsed={manageSidebarCollapsed || undefined}
     >
       <nav className="manage-rail">
-        <a className="brand-mark" href="/">
+        <a className="brand-mark" href="/" aria-label="返回博客" title="返回博客" onClick={(event) => { event.preventDefault(); void leaveManagement('/'); }}>
           y
         </a>
         <button
@@ -1127,6 +1141,16 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
           </h1>
         </div>
         <div className="manage-header-actions">
+          <button className="text-button manage-nav-button" title="返回博客" aria-label="返回博客" onClick={() => void leaveManagement('/')}>
+            <Icon name="home" />
+            <span>返回博客</span>
+          </button>
+          {publicPostHref && (
+            <button className="text-button manage-nav-button" title="查看已发布文章" aria-label="查看已发布文章" onClick={() => void leaveManagement(publicPostHref)}>
+              <Icon name="preview" />
+              <span>查看已发布文章</span>
+            </button>
+          )}
           <button
             className="text-button"
             onClick={() => setLang(lang === "zh" ? "en" : "zh")}

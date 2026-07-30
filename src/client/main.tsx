@@ -16,13 +16,16 @@ async function start(bootstrap: AppBootstrap): Promise<void> {
     }
   } else {
     const { PublicApp } = await import('./public/PublicApp');
-    createRoot(root).render(<><CursorLayer/><PublicApp initial={bootstrap} /></>);
+    const { PublicErrorBoundary } = await import('./public/PublicErrorBoundary');
+    createRoot(root).render(<><CursorLayer/><PublicErrorBoundary><PublicApp initial={bootstrap} /></PublicErrorBoundary></>);
   }
 }
 
 const bootstrap = window.__BLOG_BOOTSTRAP__;
 if (bootstrap) {
-  void start(bootstrap);
+  void start(bootstrap).catch(() => {
+    document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { className: 'bootstrap-error', textContent: '页面资源没有正确载入，请刷新后重试。' }));
+  });
 } else {
   document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { textContent: '页面数据没有正确载入。' }));
 }

@@ -14,6 +14,7 @@ function cursorKind(target: Element | null): CursorKind {
 }
 
 export function CursorLayer() {
+  const trackerRef = useRef<HTMLDivElement>(null);
   const ringRef = useRef<HTMLDivElement>(null);
   const dotRef = useRef<HTMLDivElement>(null);
 
@@ -36,17 +37,18 @@ export function CursorLayer() {
     const animate = () => {
       easedX += (x - easedX) * .28;
       easedY += (y - easedY) * .28;
-      ringRef.current?.style.setProperty('transform', `translate3d(${easedX}px,${easedY}px,0)`);
+      trackerRef.current?.style.setProperty('transform', `translate3d(${easedX}px,${easedY}px,0)`);
       if (Math.abs(x - easedX) > .08 || Math.abs(y - easedY) > .08) frame = requestAnimationFrame(animate);
       else frame = 0;
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(animate); };
     const setVisible = (next: boolean) => {
       visible = next;
-      ringRef.current?.setAttribute('data-visible', String(next));
+      trackerRef.current?.setAttribute('data-visible', String(next));
       dotRef.current?.setAttribute('data-visible', String(next));
     };
     const move = (event: PointerEvent) => {
+      if (event.buttons === 0) ringRef.current?.removeAttribute('data-pressed');
       x = event.clientX;
       y = event.clientY;
       if (!visible) {
@@ -61,17 +63,29 @@ export function CursorLayer() {
       ringRef.current?.setAttribute('data-cursor', cursorKind(target));
       schedule();
     };
-    const leave = (event: PointerEvent) => { if (!event.relatedTarget) setVisible(false); };
+    const leave = (event: PointerEvent) => {
+      if (!event.relatedTarget) {
+        ringRef.current?.removeAttribute('data-pressed');
+        setVisible(false);
+      }
+    };
     const press = () => ringRef.current?.setAttribute('data-pressed', 'true');
     const release = () => ringRef.current?.removeAttribute('data-pressed');
-    const hide = () => setVisible(false);
+    const hide = () => {
+      release();
+      setVisible(false);
+    };
+    const visibility = () => { if (document.hidden) hide(); };
 
     addEventListener('pointermove', move, { passive: true });
     addEventListener('pointerout', leave, { passive: true });
     addEventListener('pointerdown', press, { passive: true });
     addEventListener('pointerup', release, { passive: true });
     addEventListener('pointercancel', release, { passive: true });
+    addEventListener('dragend', release, { passive: true });
+    addEventListener('contextmenu', release, { passive: true });
     addEventListener('blur', hide);
+    document.addEventListener('visibilitychange', visibility);
     root.dataset.customCursor = 'ready';
 
     return () => {
@@ -80,7 +94,10 @@ export function CursorLayer() {
       removeEventListener('pointerdown', press);
       removeEventListener('pointerup', release);
       removeEventListener('pointercancel', release);
+      removeEventListener('dragend', release);
+      removeEventListener('contextmenu', release);
       removeEventListener('blur', hide);
+      document.removeEventListener('visibilitychange', visibility);
       if (frame) cancelAnimationFrame(frame);
       root.removeAttribute('data-custom-cursor');
       root.style.removeProperty('--pointer-x');
@@ -89,7 +106,7 @@ export function CursorLayer() {
   }, []);
 
   return <>
-    <div className="cursor-ring" ref={ringRef}/>
+    <div className="cursor-tracker" ref={trackerRef}><div className="cursor-ring" ref={ringRef}/></div>
     <div className="cursor-dot" ref={dotRef}/>
     <div className="cursor-spotlight"/>
   </>;

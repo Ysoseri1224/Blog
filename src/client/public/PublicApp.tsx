@@ -4,6 +4,7 @@ import { t } from '../../shared/i18n';
 import { ApiError, api } from '../api';
 import { Icon } from '../components/Icon';
 import { PageCurlCorner } from '../components/PageCurlCorner';
+import { parsePublicPostResponse } from './publicPostContract';
 
 type Activity = 'files' | 'search' | 'featured' | 'tags';
 type RightTool = 'outline' | 'properties' | 'backlinks';
@@ -11,6 +12,7 @@ type SortMode = 'published-desc' | 'published-asc' | 'modified-desc' | 'modified
 interface Tab { postId: string; slug: string; title: string; }
 interface OpenIntent { ctrlKey: boolean; metaKey: boolean; button: number; }
 interface StoredWorkspace { tabs: Tab[]; activePostId: string | null; activity: Activity; query: string; rightTool: RightTool; leftCollapsed: boolean; rightCollapsed: boolean; expanded: string[]; sort: SortMode; }
+interface ReadingIssue { kind: 'not-found' | 'error'; message: string; }
 
 const defaultStored: StoredWorkspace = { tabs: [], activePostId: null, activity: 'files', query: '', rightTool: 'outline', leftCollapsed: false, rightCollapsed: false, expanded: [], sort: 'published-desc' };
 
@@ -42,6 +44,11 @@ function sortPosts(posts: PostSummary[], mode: SortMode, lang: string): PostSumm
 
 function ToolbarButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button className="icon-button" data-active={active || undefined} aria-label={label} title={label} onClick={onClick}>{children}</button>;
+}
+
+async function fetchPublicPost(repositoryKey: string, slug: string): Promise<PostDetail> {
+  const response = await api<unknown>(`/api/public/post?repository=${encodeURIComponent(repositoryKey)}&slug=${encodeURIComponent(slug)}`);
+  return parsePublicPostResponse(response);
 }
 
 function CategoryTree({ categories, posts, expanded, onToggle, onOpen, activePostId, lang, repositoryKey }: {
@@ -137,6 +144,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const [post, setPost] = useState(initial.activePost);
   const [stored, setStored] = useState<StoredWorkspace>(() => initial.workspace ? { ...readStored(initial.workspace.repository.id), tabs: initial.activePost ? mergeTab(readStored(initial.workspace.repository.id).tabs, initial.activePost) : readStored(initial.workspace.repository.id).tabs, activePostId: initial.activePost?.id ?? null } : defaultStored);
   const [loading, setLoading] = useState(false);
+  const [readingIssue, setReadingIssue] = useState<ReadingIssue | null>(() => initial.notFound ? { kind: 'not-found', message: t(initial.lang, 'fileMissingHint') } : null);
   const [searchResults, setSearchResults] = useState<Array<{ postId: string; snippet: string; score: number }>>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [mobileLeft, setMobileLeft] = useState(false); const [mobileRight, setMobileRight] = useState(false);
@@ -163,24 +171,61 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const openPost = useCallback(async (summary: PostSummary, event?: OpenIntent, push = true) => {
     if (!workspace) return; const requestId = ++requestRef.current; setLoading(true);
     try {
-      const data = await api<{ post: PostDetail }>(`/api/public/post?repository=${encodeURIComponent(workspace.repository.key)}&slug=${encodeURIComponent(summary.slug)}`);
+      const nextPost = await fetchPublicPost(workspace.repository.key, summary.slug);
       if (requestId !== requestRef.current) return;
-      setPost(data.post); articleScrollRef.current?.scrollTo({ top: 0 });
       const newTab = Boolean(event?.ctrlKey || event?.metaKey || event?.button === 1);
-      setStored((current) => ({ ...current, tabs: newTab ? mergeTab(current.tabs, data.post) : replaceActiveTab(current.tabs, current.activePostId, data.post), activePostId: data.post.id }));
+      setPost(nextPost);
+      setStored((current) => ({ ...current, tabs: newTab ? mergeTab(current.tabs, nextPost) : replaceActiveTab(current.tabs, current.activePostId, nextPost), activePostId: nextPost.id }));
+      setReadingIssue(null);
       if (push) history.pushState({ repository: workspace.repository.key, slug: summary.slug }, '', `/${workspace.repository.key}/${summary.slug}`);
+      articleScrollRef.current?.scrollTo({ top: 0 });
       setMobileLeft(false);
+    } catch (reason) {
+      if (requestId !== requestRef.current) return;
+      const notFound = reason instanceof ApiError && reason.status === 404;
+      setReadingIssue({
+        kind: notFound ? 'not-found' : 'error',
+        message: reason instanceof Error ? reason.message : (lang === 'zh' ? '文章暂时无法打开，请稍后重试。' : 'The article could not be opened. Please try again.'),
+      });
     } finally { if (requestId === requestRef.current) setLoading(false); }
-  }, [workspace]);
+  }, [lang, workspace]);
 
   const switchRepository = useCallback(async (key: string, slug?: string, event?: OpenIntent, push = true) => {
     const currentRepositoryId = workspace?.repository.id; if (currentRepositoryId) writeStored(currentRepositoryId, stored);
-    setLoading(true); const data = await api<RepositoryWorkspace>(`/api/public/workspace?repository=${encodeURIComponent(key)}`);
-    const nextStored = readStored(data.repository.id); setWorkspace(data); setStored(nextStored); setPost(null); setMobileLeft(false);
-    const target = slug ? data.posts.find((item) => item.slug === slug) : data.posts.find((item) => item.id === nextStored.activePostId) ?? sortPosts(data.posts, nextStored.sort, lang)[0];
-    if (target) await openPostForWorkspace(data, target, nextStored, setPost, setStored, requestRef, { newTab: Boolean(event?.ctrlKey || event?.metaKey || event?.button === 1), push });
-    else if (push) history.pushState({ repository: key }, '', `/${key}/`);
-    setLoading(false);
+    const requestId = ++requestRef.current; setLoading(true);
+    try {
+      const data = await api<RepositoryWorkspace>(`/api/public/workspace?repository=${encodeURIComponent(key)}`);
+      const nextStored = readStored(data.repository.id);
+      const target = slug ? data.posts.find((item) => item.slug === slug) : data.posts.find((item) => item.id === nextStored.activePostId) ?? sortPosts(data.posts, nextStored.sort, lang)[0];
+      const nextPost = target ? await fetchPublicPost(data.repository.key, target.slug) : null;
+      if (requestId !== requestRef.current) return;
+      const newTab = Boolean(event?.ctrlKey || event?.metaKey || event?.button === 1);
+      const committedStored = nextPost ? {
+        ...nextStored,
+        tabs: newTab ? mergeTab(nextStored.tabs, nextPost) : replaceActiveTab(nextStored.tabs, nextStored.activePostId, nextPost),
+        activePostId: nextPost.id,
+      } : { ...nextStored, activePostId: null };
+      setWorkspace(data);
+      setStored(committedStored);
+      setPost(nextPost);
+      setReadingIssue(slug && !target ? { kind: 'not-found', message: t(lang, 'fileMissingHint') } : null);
+      setMobileLeft(false);
+      setMobileRight(false);
+      if (push) {
+        const path = slug ? `/${key}/${slug}` : target ? `/${key}/${target.slug}` : `/${key}/`;
+        history.pushState({ repository: key, slug: target?.slug }, '', path);
+      }
+      articleScrollRef.current?.scrollTo({ top: 0 });
+    } catch (reason) {
+      if (requestId !== requestRef.current) return;
+      const notFound = reason instanceof ApiError && reason.status === 404;
+      setReadingIssue({
+        kind: notFound ? 'not-found' : 'error',
+        message: reason instanceof Error ? reason.message : (lang === 'zh' ? '仓库暂时无法打开，请稍后重试。' : 'The repository could not be opened. Please try again.'),
+      });
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
+    }
   }, [lang, stored, workspace?.repository.id]);
 
   const navigateArticleLink = useCallback((href: string, event: MouseEvent): boolean => {
@@ -201,10 +246,14 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     const pop = () => {
       const parts = location.pathname.split('/').filter(Boolean); if (!parts[0]) return;
       if (workspace?.repository.key !== parts[0]) void switchRepository(parts[0], parts[1], undefined, false);
-      else if (parts[1]) { const target = workspace.posts.find((item) => item.slug === parts[1]); if (target) void openPost(target, undefined, false); }
+      else if (parts[1]) {
+        const target = workspace.posts.find((item) => item.slug === parts[1]);
+        if (target) void openPost(target, undefined, false);
+        else { setPost(null); setReadingIssue({ kind: 'not-found', message: t(lang, 'fileMissingHint') }); }
+      } else { setPost(null); setReadingIssue(null); }
     };
     addEventListener('popstate', pop); return () => removeEventListener('popstate', pop);
-  }, [openPost, switchRepository, workspace]);
+  }, [lang, openPost, switchRepository, workspace]);
 
   const posts = useMemo(() => workspace ? sortPosts(workspace.posts, stored.sort, lang) : [], [workspace, stored.sort, lang]);
   const expanded = useMemo(() => new Set(stored.expanded), [stored.expanded]);
@@ -246,7 +295,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     const index = stored.tabs.findIndex((tab) => tab.postId === id); const next = stored.tabs.filter((tab) => tab.postId !== id);
     const nextActive = id === stored.activePostId ? next[Math.max(0, index - 1)] ?? next[0] : next.find((tab) => tab.postId === stored.activePostId);
     updateStored({ tabs: next, activePostId: nextActive?.postId ?? null });
-    if (!nextActive) setPost(null); else { const target = workspace?.posts.find((item) => item.id === nextActive.postId); if (target) void openPost(target); }
+    if (!nextActive) { setPost(null); setReadingIssue(null); } else { const target = workspace?.posts.find((item) => item.id === nextActive.postId); if (target) void openPost(target); }
   };
   const toggleLang = () => { const next = lang === 'zh' ? 'en' : 'zh'; setLang(next); document.cookie = `blog-lang=${next}; Path=/; Max-Age=31536000; SameSite=Lax`; };
   const selectRightTool = (tool: RightTool) => {
@@ -274,7 +323,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
       <div className="repository-switcher"><select value={workspace?.repository.key ?? ''} onChange={(event) => void switchRepository(event.target.value)} aria-label="切换仓库">{repositories.map((repository) => <option value={repository.key} key={repository.id}>{repository.name}</option>)}</select><Icon name="chevron"/></div>
     </aside>
     <main className="center-pane">
-      <div className="reading-scroll" ref={articleScrollRef} onScroll={onScroll}>{loading && <div className="reading-skeleton"><i/><i/><i/><i/></div>}{!loading && post && <ReadingArticle post={post} repositoryName={workspace?.repository.name ?? ''} categories={workspace?.categories??[]} onTag={(tag)=>{updateStored({activity:'search',query:`tag:${tag}`});setMobileLeft(true);}} onNavigate={navigateArticleLink}/>} {!loading && !post && <div className="empty-reading"><Icon name="file"/><h1>{initial.notFound ? t(lang, 'fileMissing') : t(lang, 'emptyRepository')}</h1>{initial.notFound && <p>{t(lang, 'fileMissingHint')}</p>}</div>}</div>
+      <div className="reading-scroll" ref={articleScrollRef} onScroll={onScroll} aria-busy={loading}>{loading && !post && <div className="reading-skeleton"><i/><i/><i/><i/></div>}{post && <ReadingArticle post={post} repositoryName={workspace?.repository.name ?? ''} categories={workspace?.categories??[]} onTag={(tag)=>{updateStored({activity:'search',query:`tag:${tag}`});setMobileLeft(true);}} onNavigate={navigateArticleLink}/>} {readingIssue && post && <div className="reading-notice" role="status"><Icon name="file"/><span>{readingIssue.message}</span><button onClick={() => setReadingIssue(null)} aria-label={lang === 'zh' ? '关闭提示' : 'Dismiss'}><Icon name="close"/></button></div>}{!loading && !post && <div className="empty-reading"><Icon name="file"/><h1>{readingIssue?.kind === 'not-found' ? t(lang, 'fileMissing') : readingIssue?.kind === 'error' ? (lang === 'zh' ? '暂时无法载入' : 'Unable to load') : workspace?.posts.length ? (lang === 'zh' ? '选择一篇文章' : 'Select an article') : t(lang, 'emptyRepository')}</h1>{readingIssue && <p>{readingIssue.message}</p>}</div>}</div>
     </main>
     <aside className={`right-sidebar ${mobileRight ? 'mobile-open' : ''}`}>
       <nav className="right-tools"><ToolbarButton label={t(lang, 'outline')} active={stored.rightTool === 'outline' && !stored.rightCollapsed} onClick={() => selectRightTool('outline')}><Icon name="outline"/></ToolbarButton><ToolbarButton label={t(lang, 'properties')} active={stored.rightTool === 'properties' && !stored.rightCollapsed} onClick={() => selectRightTool('properties')}><Icon name="properties"/></ToolbarButton><ToolbarButton label={t(lang, 'backlinks')} active={stored.rightTool === 'backlinks' && !stored.rightCollapsed} onClick={() => selectRightTool('backlinks')}><Icon name="backlinks"/></ToolbarButton></nav>
@@ -296,4 +345,3 @@ function sortModeLabel(mode: SortMode, lang: string): string { const labels: Rec
 function revealCategory(categoryId: string | null | undefined, categories: Category[], update: (patch: Partial<StoredWorkspace>) => void, current: Set<string>) { const byId = new Map(categories.map((category) => [category.id, category])); let id = categoryId; const next = new Set(current); while (id) { next.add(id); id = byId.get(id)?.parentId ?? null; } update({ expanded: [...next] }); }
 function categoryPath(categoryId:string|null,categories:Category[]):string[]{const byId=new Map(categories.map((category)=>[category.id,category]));const result:string[]=[];const seen=new Set<string>();let id=categoryId;while(id&&!seen.has(id)){seen.add(id);const category=byId.get(id);if(!category)break;result.unshift(category.name);id=category.parentId;}return result;}
 function extractOutline(html: string): Array<{ id: string; text: string; level: number }> { if (!html) return []; const template = document.createElement('template'); template.innerHTML = html; return [...template.content.querySelectorAll<HTMLHeadingElement>('h1,h2,h3,h4,h5,h6')].map((heading) => ({ id: heading.id, text: heading.textContent ?? '', level: Number(heading.tagName.slice(1)) })); }
-async function openPostForWorkspace(workspace: RepositoryWorkspace, summary: PostSummary, stored: StoredWorkspace, setPost: (post: PostDetail) => void, setStored: React.Dispatch<React.SetStateAction<StoredWorkspace>>, requestRef: React.MutableRefObject<number>, options: { newTab?: boolean; push?: boolean } = {}) { const requestId = ++requestRef.current; const data = await api<{ post: PostDetail }>(`/api/public/post?repository=${encodeURIComponent(workspace.repository.key)}&slug=${encodeURIComponent(summary.slug)}`); if (requestId !== requestRef.current) return; setPost(data.post); setStored({ ...stored, tabs: options.newTab ? mergeTab(stored.tabs, data.post) : replaceActiveTab(stored.tabs, stored.activePostId, data.post), activePostId: data.post.id }); if (options.push !== false) history.pushState({ repository: workspace.repository.key, slug: summary.slug }, '', `/${workspace.repository.key}/${summary.slug}`); }

@@ -74,10 +74,10 @@ export function PageCurlCorner() {
         <path className="page-curl-contact" d="M18 72C31 64 42 57 51 48C60 39 67 28 72 18"/>
       </g>
       <g className="page-curl-fold">
-        <path className="page-curl-cast" d="M72 18C57 20 39 24 29 34C22 41 19 57 18 72C31 64 42 57 51 48C60 39 67 28 72 18Z"/>
-        <path className="page-curl-back" d="M72 18C57 20 39 24 29 34C22 41 19 57 18 72C31 64 42 57 51 48C60 39 67 28 72 18Z" fill="url(#curl-paper-back)"/>
-        <path className="page-curl-reflection" d="M68.5 21C55 23 41 27 32 36C27 42 23 55 21 66C31 59 41 52 49 44C57 36 64 27 68.5 21Z" fill="url(#curl-back-light)"/>
-        <path className="page-curl-free-edge" d="M72 18C57 20 39 24 29 34C22 41 19 57 18 72"/>
+        <path className="page-curl-cast" d="M72 18C62 19 50 36 34 38C34 53 22 65 18 72C31 64 42 57 51 48C60 39 67 28 72 18Z"/>
+        <path className="page-curl-back" d="M72 18C62 19 50 36 34 38C34 53 22 65 18 72C31 64 42 57 51 48C60 39 67 28 72 18Z" fill="url(#curl-paper-back)"/>
+        <path className="page-curl-reflection" d="M68 21C58 23 48 34 37 39C37 49 29 59 22 66C33 59 42 52 49 44C57 36 64 27 68 21Z" fill="url(#curl-back-light)"/>
+        <path className="page-curl-free-edge" d="M72 18C62 19 50 36 34 38C34 53 22 65 18 72"/>
         <path className="page-curl-crease" d="M18 72C31 64 42 57 51 48C60 39 67 28 72 18"/>
       </g>
     </svg>

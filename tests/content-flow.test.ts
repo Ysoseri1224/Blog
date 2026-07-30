@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
+import { parsePublicPostResponse } from '../src/client/public/publicPostContract';
 import type { PostDetail } from '../src/shared/types';
 import { authorRequest, jsonBody, login, workerRequest } from './helpers';
 
@@ -55,7 +56,10 @@ describe('工作稿、快照与历史', () => {
     expect(publish.status).toBe(200);
     const firstPublic = await workerRequest(`/api/public/post?repository=life&slug=${slug}`);
     expect(firstPublic.status).toBe(200);
-    expect((await firstPublic.json<PostDetail>()).html).toContain('第一版');
+    const publicPayload = await firstPublic.json<unknown>();
+    const publicPost = parsePublicPostResponse(publicPayload);
+    expect(publicPost.html).toContain('第一版');
+    expect(() => parsePublicPostResponse({ post: publicPost })).toThrow('不完整的数据');
 
     const second = await authorRequest(session, `/api/manage/posts/${post.id}`, {
       method: 'PUT', body: JSON.stringify(draft(saved, '# 第二版工作稿\n\n尚未更新发布。', slug)),

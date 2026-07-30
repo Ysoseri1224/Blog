@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ManageBootstrap } from '../../shared/types';
 import { t } from '../../shared/i18n';
 import { api } from '../api';
+import { Icon } from '../components/Icon';
 
 export function AuthApp({ initial }: { initial: ManageBootstrap }) {
   const [password, setPassword] = useState('');
@@ -27,5 +28,5 @@ export function AuthApp({ initial }: { initial: ManageBootstrap }) {
     }
   };
 
-  return <main className="auth-page"><section className="auth-card"><p>blog · ysoseri.us</p><h1>{t(initial.lang, 'login')}</h1><form onSubmit={(event) => void submit(event)}><label>{t(initial.lang, 'password')}<input ref={inputRef} type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={busy || !password}>{busy ? '正在验证…' : t(initial.lang, 'signIn')}</button></form></section></main>;
+  return <main className="auth-page"><section className="auth-card"><a className="auth-back-link" href="/"><Icon name="home"/>{initial.lang === 'zh' ? '返回博客' : 'Back to blog'}</a><p>blog · ysoseri.us</p><h1>{t(initial.lang, 'login')}</h1><form onSubmit={(event) => void submit(event)}><label>{t(initial.lang, 'password')}<input ref={inputRef} type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={busy || !password}>{busy ? '正在验证…' : t(initial.lang, 'signIn')}</button></form></section></main>;
 }
