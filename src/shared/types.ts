@@ -54,6 +54,18 @@ export interface PostDetail extends PostSummary {
   backlinks: Array<{ postId: string; title: string; url: string; repositoryName: string }>;
 }
 
+export interface RecentPublicPost {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  repositoryKey: string;
+  repositoryName: string;
+  language: string;
+  firstPublishedAt: string;
+  lastPublishedAt: string;
+}
+
 export interface RepositoryWorkspace {
   repository: Repository;
   categories: Category[];
@@ -89,4 +101,3 @@ declare global {
     __BLOG_BOOTSTRAP__?: AppBootstrap;
   }
 }
-

@@ -1,4 +1,4 @@
-import type { Category, PostDetail, PostStatus, PostSummary, Repository, RepositoryWorkspace, Visibility } from '../shared/types';
+import type { Category, PostDetail, PostStatus, PostSummary, RecentPublicPost, Repository, RepositoryWorkspace, Visibility } from '../shared/types';
 import { renderMarkdown } from './markdown';
 import { resolveWikiTargets } from './linking';
 
@@ -136,6 +136,37 @@ export async function getWorkspace(env: Env, repository: Repository, author: boo
   ).bind(repository.id).all<PostRow>();
   const posts = result.results.map((post) => mapPost(post));
   return { repository, categories: publicCategorySubset(categories, posts), posts };
+}
+
+export async function listRecentPublicPosts(env: Env, limit: number): Promise<RecentPublicPost[]> {
+  const result = await env.CONTENT_DB.prepare(
+    `SELECT p.id,s.title,s.description,s.canonical_url,s.public_repository_key,r.name AS repository_name,
+            s.language,s.first_published_at,s.published_at
+       FROM posts p
+       JOIN public_snapshots s ON s.id=p.public_snapshot_id
+       JOIN repositories r ON r.id=s.repository_id
+      WHERE p.public_visible=1 AND p.deleted_at IS NULL AND r.visibility='public'
+        AND NOT EXISTS (
+          SELECT 1 FROM deletion_jobs j
+           WHERE j.kind='repository' AND j.target_id=r.id AND j.completed_at IS NULL
+        )
+      ORDER BY s.first_published_at DESC,s.published_at DESC,s.id DESC
+      LIMIT ?1`,
+  ).bind(limit).all<{
+    id: string; title: string; description: string; canonical_url: string; public_repository_key: string;
+    repository_name: string; language: string; first_published_at: string; published_at: string;
+  }>();
+  return result.results.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    url: row.canonical_url,
+    repositoryKey: row.public_repository_key,
+    repositoryName: row.repository_name,
+    language: row.language,
+    firstPublishedAt: row.first_published_at,
+    lastPublishedAt: row.published_at,
+  }));
 }
 
 async function backlinks(env: Env, postId: string, author: boolean): Promise<PostDetail['backlinks']> {

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { categoryCreateSchema, loginSchema, postCreateSchema, postSaveSchema, repositoryCreateSchema, repositoryUpdateSchema, scheduleSchema, slugSchema } from '../shared/schemas';
 import type { ManageBootstrap } from '../shared/types';
 import { changePassword, getSession, login, logout, reauthenticate, requireSession } from './auth';
-import { getManagePost, getPublicPostByPath, getRepositoryById, getRepositoryByKey, getWorkspace, listRepositories } from './data';
+import { getManagePost, getPublicPostByPath, getRepositoryById, getRepositoryByKey, getWorkspace, listRecentPublicPosts, listRepositories } from './data';
 import { HttpError, json, methodNotAllowed, parseJson } from './http';
 import { commitImport, exportPostMarkdown, previewImport } from './importer';
 import { createCategory, createRepository, deleteCategory, deletePostPermanently, deleteRepository, updateCategory, updateRepository } from './management';
@@ -118,6 +118,14 @@ async function publicApi(request: Request, env: Env, path: string): Promise<Resp
     const repository = await getRepositoryByKey(env, repositoryKey, false);
     if (!repository) throw new HttpError(404, '仓库不存在', 'repository_not_found');
     return json({ results: await searchPosts(env, repository.id, query, false) });
+  }
+  if (path === '/api/public/recent') {
+    const requestedLimit = Number.parseInt(url.searchParams.get('limit') ?? '1', 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(6, requestedLimit)) : 1;
+    const response = json({ posts: await listRecentPublicPosts(env, limit) });
+    response.headers.set('access-control-allow-origin', '*');
+    response.headers.set('cache-control', 'public, max-age=60, stale-while-revalidate=300');
+    return response;
   }
   throw new HttpError(404, '接口不存在', 'api_not_found');
 }
