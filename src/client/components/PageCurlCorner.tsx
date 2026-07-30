@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import type { InterfaceLanguage } from '../../shared/types';
+import { t } from '../../shared/i18n';
 
-export function PageCurlCorner() {
+export function PageCurlCorner({ lang }: { lang: InterfaceLanguage }) {
   const [ready, setReady] = useState(false);
   const touchReadyRef = useRef(false);
   const resetTimerRef = useRef<number | null>(null);
@@ -33,7 +35,7 @@ export function PageCurlCorner() {
     <a
       className="page-curl-link"
       href="/manage"
-      aria-label="进入管理"
+      aria-label={t(lang, 'enterManage')}
       onFocus={() => setReady(true)}
       onBlur={() => { if (!touchReadyRef.current) setReady(false); }}
       onClick={() => disarm()}
@@ -43,7 +45,7 @@ export function PageCurlCorner() {
           window.location.assign('/manage');
         }
       }}
-    ><span className="sr-only">进入管理</span></a>
+    ><span className="sr-only">{t(lang, 'enterManage')}</span></a>
     <svg className="page-curl-visual" viewBox="0 0 72 72" aria-hidden="true">
       <defs>
         <linearGradient id="curl-underlay" x1="1" y1="1" x2="0" y2="0">

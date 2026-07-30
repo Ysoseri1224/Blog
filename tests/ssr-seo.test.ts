@@ -57,7 +57,7 @@ describe('无 JavaScript HTML 与 SEO 出口', () => {
       method: 'PUT', body: JSON.stringify({
         baseRevision: created.revision, title: 'SSR 边界文章', slug: 'runtime-ssr-seo', repositoryId: lifeRepositoryId,
         categoryId: child.id, language: 'zh-CN', summary: '确定的 SSR 摘要',
-        markdown: `# 正文标题\n\n可抓取的完整正文。\n\n![[SSR 嵌入目标]]\n\n![RSS 图片](media://${mediaId})\n\n::embed[来源视频]{url="https://www.youtube.com/watch?v=source-test"}\n\n<video controls src="https://tracker.example/video.mp4"></video>`,
+        markdown: `# 正文标题\n\n可抓取的完整正文。\n\n![[SSR 嵌入目标]]\n\n[[缺失目标]]\n\n![RSS 图片](media://${mediaId})\n\n::embed[来源视频]{url="https://www.youtube.com/watch?v=source-test"}\n\n<video controls src="https://tracker.example/video.mp4"></video>`,
         tags: ['ssr'], featured: false, coverAssetId: null, customProperties: {},
       }),
     });
@@ -75,12 +75,29 @@ describe('无 JavaScript HTML 与 SEO 出口', () => {
     expect(html).toContain('可抓取的完整正文');
     expect(html).toContain('article-embed-expanded');
     expect(html).toContain('这是公开快照中的嵌入内容');
+    expect(html).toContain('未解析');
+    expect(html).toContain('文章嵌入');
+    expect(html).toContain('class="embed-consent"');
+    expect(html).toContain('YouTube · www.youtube.com · 点击后加载');
+    expect(html).not.toContain('<a href="http://www.youtube.com">');
+    expect(html).toContain('点击后加载');
     expect(html).toContain('媒体地址未使用站内受控资源，已停止加载');
     expect(html).not.toContain('tracker.example');
     expect(html).toContain('<link rel="canonical" href="https://blog.ysoseri.us/life/runtime-ssr-seo">');
     expect(html).toContain('<meta property="og:title" content="SSR 边界文章 · 生活碎片 · ysoseri.us">');
     expect(html).toContain('"@type":"BlogPosting"');
     expect(html).not.toContain('noindex,nofollow');
+
+    const englishHtml = await (await workerRequest('/life/runtime-ssr-seo', { headers: { cookie: 'blog-lang=en' } })).text();
+    expect(englishHtml).toContain('<html lang="en"');
+    expect(englishHtml).toContain('Unresolved');
+    expect(englishHtml).toContain('Embedded article');
+    expect(englishHtml).toContain('Click to load');
+    expect(englishHtml).toContain('This media URL is not a managed site asset, so loading was blocked.');
+    expect(englishHtml).not.toContain('>未解析</small>');
+    expect(englishHtml).not.toContain('>文章嵌入</span>');
+    expect(englishHtml).not.toContain(' · 点击后加载</span>');
+    expect(englishHtml).toContain('可抓取的完整正文');
 
     const trailingSlash = await workerRequest('/life/runtime-ssr-seo/', { redirect: 'manual' });
     expect(trailingSlash.status).toBe(301);

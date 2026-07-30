@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import type { Category, PostDetail, PostSummary, PublicBootstrap, RepositoryWorkspace } from '../../shared/types';
+import type { Category, InterfaceLanguage, PostDetail, PostSummary, PublicBootstrap, RepositoryWorkspace } from '../../shared/types';
 import { t } from '../../shared/i18n';
 import { ApiError, api } from '../api';
 import { Icon } from '../components/Icon';
@@ -12,7 +12,7 @@ type SortMode = 'published-desc' | 'published-asc' | 'modified-desc' | 'modified
 interface Tab { postId: string; slug: string; title: string; }
 interface OpenIntent { ctrlKey: boolean; metaKey: boolean; button: number; }
 interface StoredWorkspace { tabs: Tab[]; activePostId: string | null; activity: Activity; query: string; rightTool: RightTool; leftCollapsed: boolean; rightCollapsed: boolean; expanded: string[]; sort: SortMode; }
-interface ReadingIssue { kind: 'not-found' | 'error'; message: string; }
+interface ReadingIssue { kind: 'not-found' | 'post-error' | 'repository-error'; }
 
 const defaultStored: StoredWorkspace = { tabs: [], activePostId: null, activity: 'files', query: '', rightTool: 'outline', leftCollapsed: false, rightCollapsed: false, expanded: [], sort: 'published-desc' };
 
@@ -31,7 +31,7 @@ function writeStored(repositoryId: string, value: StoredWorkspace): void {
   } catch { /* 隐私模式下仍可继续阅读。 */ }
 }
 
-function sortPosts(posts: PostSummary[], mode: SortMode, lang: string): PostSummary[] {
+function sortPosts(posts: PostSummary[], mode: SortMode, lang: InterfaceLanguage): PostSummary[] {
   const collator = new Intl.Collator(lang === 'zh' ? 'zh-CN' : 'en', { numeric: true, sensitivity: 'base' });
   return [...posts].sort((a, b) => {
     if (mode === 'title-asc' || mode === 'title-desc') return collator.compare(a.title, b.title) * (mode === 'title-asc' ? 1 : -1) || a.id.localeCompare(b.id);
@@ -53,7 +53,7 @@ async function fetchPublicPost(repositoryKey: string, slug: string): Promise<Pos
 
 function CategoryTree({ categories, posts, expanded, onToggle, onOpen, activePostId, lang, repositoryKey }: {
   categories: Category[]; posts: PostSummary[]; expanded: Set<string>; onToggle: (id: string) => void;
-  onOpen: (post: PostSummary, event: ReactMouseEvent) => void; activePostId?: string; lang: string; repositoryKey: string;
+  onOpen: (post: PostSummary, event: ReactMouseEvent) => void; activePostId?: string; lang: InterfaceLanguage; repositoryKey: string;
 }) {
   const children = new Map<string | null, Category[]>();
   for (const category of categories) children.set(category.parentId, [...(children.get(category.parentId) ?? []), category]);
@@ -65,29 +65,30 @@ function CategoryTree({ categories, posts, expanded, onToggle, onOpen, activePos
       const open = expanded.has(category.id);
       const directChildren = children.get(category.id) ?? [];
       return <div className="tree-group" key={category.id}>
-        <button className="tree-row folder-row" style={{ '--depth': depth } as React.CSSProperties} onClick={() => onToggle(category.id)} title={`${postsByCategory.get(category.id)?.length??0} 篇文章，${directChildren.length} 个分类`}>
+        <button className="tree-row folder-row" style={{ '--depth': depth } as React.CSSProperties} onClick={() => onToggle(category.id)} title={categorySummary(postsByCategory.get(category.id)?.length ?? 0, directChildren.length, lang)}>
           <Icon name="chevron" className={open ? 'rotated' : ''}/><Icon name="folder"/><span>{category.name}</span>
         </button>
         {open && <div>{renderLevel(category.id, depth + 1)}</div>}
       </div>;
     })}
-    {(postsByCategory.get(parentId) ?? []).map((post) => <PostRow key={post.id} repositoryKey={repositoryKey} post={post} depth={depth} active={activePostId === post.id} onOpen={onOpen}/>) }
+    {(postsByCategory.get(parentId) ?? []).map((post) => <PostRow key={post.id} repositoryKey={repositoryKey} post={post} depth={depth} active={activePostId === post.id} lang={lang} onOpen={onOpen}/>) }
   </>;
   return <div className="file-tree">{renderLevel(null, 0)}</div>;
 }
 
-function PostRow({ post, repositoryKey, depth, active, onOpen }: { post: PostSummary; repositoryKey: string; depth: number; active: boolean; onOpen: (post: PostSummary, event: ReactMouseEvent) => void }) {
+function PostRow({ post, repositoryKey, depth, active, lang, onOpen }: { post: PostSummary; repositoryKey: string; depth: number; active: boolean; lang: InterfaceLanguage; onOpen: (post: PostSummary, event: ReactMouseEvent) => void }) {
   return <a href={`/${repositoryKey}/${post.slug}`} className="tree-row file-row" data-active={active || undefined} style={{ '--depth': depth } as React.CSSProperties}
-    onClick={(event) => { event.preventDefault(); onOpen(post, event); }} onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); onOpen(post, event); } }} title={`最后修改：${new Date(post.updatedAt).toLocaleString()}`}>
+    onClick={(event) => { event.preventDefault(); onOpen(post, event); }} onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); onOpen(post, event); } }} title={`${t(lang, 'lastModified')}: ${new Date(post.updatedAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en')}`}>
     <Icon name="file"/><span>{post.title}</span>{post.firstPublishedAt && <time>{post.firstPublishedAt.slice(0, 10)}</time>}
   </a>;
 }
 
-function ReadingArticle({ post, repositoryName, categories, onTag, onNavigate }: { post: PostDetail; repositoryName: string; categories:Category[]; onTag:(tag:string)=>void; onNavigate:(href:string,event:MouseEvent)=>boolean }) {
+function ReadingArticle({ post, repositoryName, categories, lang, onTag, onNavigate }: { post: PostDetail; repositoryName: string; categories:Category[]; lang: InterfaceLanguage; onTag:(tag:string)=>void; onNavigate:(href:string,event:MouseEvent)=>boolean }) {
   const articleRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const article = articleRef.current;
     if (!article) return;
+    localizeArticleSystemText(article, lang);
     const listeners: Array<() => void> = [];
     const ensureStylesheet = (id: string, href: string) => {
       if (document.getElementById(id)) return;
@@ -126,12 +127,12 @@ function ReadingArticle({ post, repositoryName, categories, onTag, onNavigate }:
     const mermaidBlocks = [...article.querySelectorAll<HTMLElement>('code.language-mermaid')];
     if (mermaidBlocks.length) void import('mermaid').then(({ default: mermaid }) => { mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'neutral' }); return mermaid.run({ nodes: mermaidBlocks }); });
     return () => listeners.forEach((remove) => remove());
-  }, [onNavigate, post.html, post.id, post.publicRevision]);
+  }, [lang, onNavigate, post.html, post.id, post.publicRevision]);
   const path=categoryPath(post.categoryId,categories);
   return <article className="markdown-article" ref={articleRef}>
     <div className="display-path"><span>{repositoryName}</span>{path.map((name,index)=><span key={`${name}-${index}`}>/ {name}</span>)}<span>/</span><span>{post.title}</span></div>
     <h1 className="article-title">{post.title}</h1>
-    <div className="article-meta"><time>{post.firstPublishedAt?.slice(0, 10)}</time><span>{post.readingMinutes} min</span>{post.tags.map((tag) => <button className="tag-pill" key={tag} onClick={()=>onTag(tag)}>#{tag}</button>)}</div>
+    <div className="article-meta"><time>{post.firstPublishedAt?.slice(0, 10)}</time><span>{post.readingMinutes} {t(lang, 'minuteUnit')}</span>{post.tags.map((tag) => <button className="tag-pill" key={tag} onClick={()=>onTag(tag)}>#{tag}</button>)}</div>
     <div className="markdown-body" dangerouslySetInnerHTML={{ __html: post.html ?? '' }}/>
   </article>;
 }
@@ -144,7 +145,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const [post, setPost] = useState(initial.activePost);
   const [stored, setStored] = useState<StoredWorkspace>(() => initial.workspace ? { ...readStored(initial.workspace.repository.id), tabs: initial.activePost ? mergeTab(readStored(initial.workspace.repository.id).tabs, initial.activePost) : readStored(initial.workspace.repository.id).tabs, activePostId: initial.activePost?.id ?? null } : defaultStored);
   const [loading, setLoading] = useState(false);
-  const [readingIssue, setReadingIssue] = useState<ReadingIssue | null>(() => initial.notFound ? { kind: 'not-found', message: t(initial.lang, 'fileMissingHint') } : null);
+  const [readingIssue, setReadingIssue] = useState<ReadingIssue | null>(() => initial.notFound ? { kind: 'not-found' } : null);
   const [searchResults, setSearchResults] = useState<Array<{ postId: string; snippet: string; score: number }>>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [mobileLeft, setMobileLeft] = useState(false); const [mobileRight, setMobileRight] = useState(false);
@@ -154,6 +155,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const [activeHeading, setActiveHeading] = useState('');
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('blog-theme', theme); }, [theme]);
+  useEffect(() => { document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'; }, [lang]);
   useEffect(() => { if (workspace) writeStored(workspace.repository.id, stored); }, [workspace, stored]);
   useEffect(() => {
     if (stored.activity !== 'search' || !stored.query.trim() || !workspace) { setSearchResults([]); setSearchError(null); return; }
@@ -161,7 +163,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     const controller = new AbortController(); const timer = setTimeout(() => {
       void api<{ results: typeof searchResults }>(`/api/public/search?repository=${encodeURIComponent(workspace.repository.key)}&q=${encodeURIComponent(stored.query)}`, { signal: controller.signal }).then((data) => { setSearchResults(data.results); setSearchError(null); }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setSearchResults([]); setSearchError(error instanceof ApiError ? error.message : (lang === 'zh' ? '搜索暂时不可用，请稍后重试。' : 'Search is temporarily unavailable.'));
+        setSearchResults([]); setSearchError(t(lang, 'searchUnavailable'));
       });
     }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
@@ -183,12 +185,9 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     } catch (reason) {
       if (requestId !== requestRef.current) return;
       const notFound = reason instanceof ApiError && reason.status === 404;
-      setReadingIssue({
-        kind: notFound ? 'not-found' : 'error',
-        message: reason instanceof Error ? reason.message : (lang === 'zh' ? '文章暂时无法打开，请稍后重试。' : 'The article could not be opened. Please try again.'),
-      });
+      setReadingIssue({ kind: notFound ? 'not-found' : 'post-error' });
     } finally { if (requestId === requestRef.current) setLoading(false); }
-  }, [lang, workspace]);
+  }, [workspace]);
 
   const switchRepository = useCallback(async (key: string, slug?: string, event?: OpenIntent, push = true) => {
     const currentRepositoryId = workspace?.repository.id; if (currentRepositoryId) writeStored(currentRepositoryId, stored);
@@ -208,7 +207,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
       setWorkspace(data);
       setStored(committedStored);
       setPost(nextPost);
-      setReadingIssue(slug && !target ? { kind: 'not-found', message: t(lang, 'fileMissingHint') } : null);
+      setReadingIssue(slug && !target ? { kind: 'not-found' } : null);
       setMobileLeft(false);
       setMobileRight(false);
       if (push) {
@@ -219,10 +218,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     } catch (reason) {
       if (requestId !== requestRef.current) return;
       const notFound = reason instanceof ApiError && reason.status === 404;
-      setReadingIssue({
-        kind: notFound ? 'not-found' : 'error',
-        message: reason instanceof Error ? reason.message : (lang === 'zh' ? '仓库暂时无法打开，请稍后重试。' : 'The repository could not be opened. Please try again.'),
-      });
+      setReadingIssue({ kind: notFound ? 'not-found' : 'repository-error' });
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
@@ -249,7 +245,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
       else if (parts[1]) {
         const target = workspace.posts.find((item) => item.slug === parts[1]);
         if (target) void openPost(target, undefined, false);
-        else { setPost(null); setReadingIssue({ kind: 'not-found', message: t(lang, 'fileMissingHint') }); }
+        else { setPost(null); setReadingIssue({ kind: 'not-found' }); }
       } else { setPost(null); setReadingIssue(null); }
     };
     addEventListener('popstate', pop); return () => removeEventListener('popstate', pop);
@@ -297,51 +293,83 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
     updateStored({ tabs: next, activePostId: nextActive?.postId ?? null });
     if (!nextActive) { setPost(null); setReadingIssue(null); } else { const target = workspace?.posts.find((item) => item.id === nextActive.postId); if (target) void openPost(target); }
   };
-  const toggleLang = () => { const next = lang === 'zh' ? 'en' : 'zh'; setLang(next); document.cookie = `blog-lang=${next}; Path=/; Max-Age=31536000; SameSite=Lax`; };
+  const toggleLang = () => { const next = lang === 'zh' ? 'en' : 'zh'; document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en'; setLang(next); document.cookie = `blog-lang=${next}; Path=/; Max-Age=31536000; SameSite=Lax`; };
   const selectRightTool = (tool: RightTool) => {
     if (stored.rightTool === tool && !stored.rightCollapsed) { updateStored({ rightCollapsed: true }); setMobileRight(false); return; }
     updateStored({ rightTool: tool, rightCollapsed: false });
   };
-  const activityTitle = stored.activity === 'files' ? t(lang, 'files') : stored.activity === 'search' ? t(lang, 'search') : stored.activity === 'featured' ? t(lang, 'featured') : (lang === 'zh' ? '当前文章标签' : 'Current article tags');
+  const activityTitle = stored.activity === 'files' ? t(lang, 'files') : stored.activity === 'search' ? t(lang, 'search') : stored.activity === 'featured' ? t(lang, 'featured') : t(lang, 'currentArticleTags');
+  const issueMessage = readingIssue ? readingIssueText(readingIssue.kind, lang) : null;
 
   return <div className="app-shell" data-left-collapsed={stored.leftCollapsed || undefined} data-right-collapsed={stored.rightCollapsed || undefined}>
     <header className="top-chrome">
-      <div className="top-left"><a className="home-link" href="https://ysoseri.us" aria-label={t(lang, 'backHome')}><Icon name="home"/><span>ysoseri.us</span></a><ToolbarButton label="左侧栏" onClick={() => updateStored({ leftCollapsed: !stored.leftCollapsed })}><Icon name="panel-left"/></ToolbarButton></div>
-      <div className="tabs" role="tablist">{stored.tabs.map((tab) => <div className="article-tab" role="tab" aria-selected={tab.postId === stored.activePostId} draggable key={tab.postId} onDragStart={(event)=>event.dataTransfer.setData('text/tab-id',tab.postId)} onDragOver={(event)=>event.preventDefault()} onDrop={(event)=>{event.preventDefault();updateStored({tabs:reorderTabs(stored.tabs,event.dataTransfer.getData('text/tab-id'),tab.postId)});}} onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); }}><Icon name="file"/><span>{tab.title}</span><button aria-label="关闭标签" onClick={(event) => { event.stopPropagation(); closeTab(tab.postId); }}><Icon name="close"/></button></div>)}</div>
-      <div className="top-right"><ToolbarButton label="右侧栏" onClick={() => updateStored({ rightCollapsed: !stored.rightCollapsed })}><Icon name="panel-right"/></ToolbarButton><ToolbarButton label="主题" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Icon name="sun"/> : <Icon name="moon"/>}</ToolbarButton><button className="text-button" onClick={toggleLang}>{lang === 'zh' ? 'EN' : '中'}</button><ToolbarButton label="标签" onClick={() => { updateStored({ activity: 'tags' }); setMobileLeft(true); }}><Icon name="tag"/></ToolbarButton></div>
-      <button className="mobile-menu left" onClick={() => { setMobileLeft(!mobileLeft); setMobileRight(false); setMobileTabs(false); }}><Icon name="menu"/></button><button className="mobile-title" aria-label={lang === 'zh' ? '打开标签页概览' : 'Open tab overview'} onClick={() => { setMobileTabs(!mobileTabs); setMobileLeft(false); setMobileRight(false); }}>{post?.title ?? workspace?.repository.name ?? 'Blog'}</button><button className="mobile-menu right" onClick={() => { setMobileRight(!mobileRight); setMobileLeft(false); setMobileTabs(false); }}><Icon name="panel-right"/></button>
+      <div className="top-left"><a className="home-link" href="https://ysoseri.us" aria-label={t(lang, 'backHome')}><Icon name="home"/><span>ysoseri.us</span></a><ToolbarButton label={t(lang, 'leftSidebar')} onClick={() => updateStored({ leftCollapsed: !stored.leftCollapsed })}><Icon name="panel-left"/></ToolbarButton></div>
+      <div className="tabs" role="tablist">{stored.tabs.map((tab) => <div className="article-tab" role="tab" aria-selected={tab.postId === stored.activePostId} draggable key={tab.postId} onDragStart={(event)=>event.dataTransfer.setData('text/tab-id',tab.postId)} onDragOver={(event)=>event.preventDefault()} onDrop={(event)=>{event.preventDefault();updateStored({tabs:reorderTabs(stored.tabs,event.dataTransfer.getData('text/tab-id'),tab.postId)});}} onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); }}><Icon name="file"/><span>{tab.title}</span><button aria-label={`${t(lang, 'closeTab')}: ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.postId); }}><Icon name="close"/></button></div>)}</div>
+      <div className="top-right"><ToolbarButton label={t(lang, 'rightSidebar')} onClick={() => updateStored({ rightCollapsed: !stored.rightCollapsed })}><Icon name="panel-right"/></ToolbarButton><ToolbarButton label={t(lang, 'theme')} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Icon name="sun"/> : <Icon name="moon"/>}</ToolbarButton><button className="text-button" aria-label={t(lang, 'switchLanguage')} onClick={toggleLang}>{lang === 'zh' ? 'EN' : '中'}</button><ToolbarButton label={t(lang, 'tags')} onClick={() => { updateStored({ activity: 'tags' }); setMobileLeft(true); }}><Icon name="tag"/></ToolbarButton></div>
+      <button className="mobile-menu left" aria-label={t(lang, 'leftSidebar')} onClick={() => { setMobileLeft(!mobileLeft); setMobileRight(false); setMobileTabs(false); }}><Icon name="menu"/></button><button className="mobile-title" aria-label={t(lang, 'openTabOverview')} onClick={() => { setMobileTabs(!mobileTabs); setMobileLeft(false); setMobileRight(false); }}>{post?.title ?? workspace?.repository.name ?? 'Blog'}</button><button className="mobile-menu right" aria-label={t(lang, 'rightSidebar')} onClick={() => { setMobileRight(!mobileRight); setMobileLeft(false); setMobileTabs(false); }}><Icon name="panel-right"/></button>
     </header>
     <aside className={`left-sidebar ${mobileLeft ? 'mobile-open' : ''}`}>
       <nav className="activity-bar"><ToolbarButton label={t(lang, 'files')} active={stored.activity === 'files'} onClick={() => updateStored({ activity: 'files' })}><Icon name="folder"/></ToolbarButton><ToolbarButton label={t(lang, 'search')} active={stored.activity === 'search'} onClick={() => updateStored({ activity: 'search' })}><Icon name="search"/></ToolbarButton><ToolbarButton label={t(lang, 'featured')} active={stored.activity === 'featured'} onClick={() => updateStored({ activity: 'featured' })}><Icon name="star"/></ToolbarButton></nav>
       <section className="left-panel">
         <div className="panel-heading"><strong>{activityTitle}</strong></div>
-        {stored.activity === 'files' && <><div className="file-tools"><span className="sort-mode-label">{sortModeLabel(stored.sort, lang)}</span><ToolbarButton label={`${t(lang, 'sort')}：${sortModeLabel(stored.sort, lang)}`} onClick={() => updateStored({ sort: nextSort(stored.sort) })}><Icon name="sort"/></ToolbarButton><ToolbarButton label={t(lang, 'reveal')} onClick={() => revealCategory(post?.categoryId, workspace?.categories ?? [], updateStored, expanded)}><Icon name="locate"/></ToolbarButton><ToolbarButton label={t(lang, 'collapseAll')} onClick={() => updateStored({ expanded: [] })}><Icon name="collapse"/></ToolbarButton></div><CategoryTree categories={workspace?.categories ?? []} posts={posts} expanded={expanded} activePostId={post?.id} lang={lang} repositoryKey={workspace?.repository.key??''} onToggle={(id) => updateStored({ expanded: expanded.has(id) ? [...expanded].filter((item) => item !== id) : [...expanded, id] })} onOpen={(item, event) => void openPost(item, event)}/></>}
-        {stored.activity === 'search' && <div className="search-panel"><label className="search-input"><Icon name="search"/><input autoFocus value={stored.query} onChange={(event) => updateStored({ query: event.target.value })} placeholder={lang === 'zh' ? '输入关键词或 tag:…' : 'Keywords or tag:…'}/></label>{searchError && <p className="search-error" role="alert">{searchError}</p>}<div className="search-results">{visibleResults.map(({ post: item, snippet }) => <button key={item.id} onClick={() => void openPost(item)}><strong>{item.title}</strong><span dangerouslySetInnerHTML={{ __html: snippet }}/></button>)}{stored.query.trim() && !searchError && !visibleResults.length && <p className="panel-empty">{lang === 'zh' ? '没有匹配的公开文章。' : 'No matching public posts.'}</p>}</div></div>}
+        {stored.activity === 'files' && <><div className="file-tools"><span className="sort-mode-label">{sortModeLabel(stored.sort, lang)}</span><ToolbarButton label={`${t(lang, 'sort')}: ${sortModeLabel(stored.sort, lang)}`} onClick={() => updateStored({ sort: nextSort(stored.sort) })}><Icon name="sort"/></ToolbarButton><ToolbarButton label={t(lang, 'reveal')} onClick={() => revealCategory(post?.categoryId, workspace?.categories ?? [], updateStored, expanded)}><Icon name="locate"/></ToolbarButton><ToolbarButton label={t(lang, 'collapseAll')} onClick={() => updateStored({ expanded: [] })}><Icon name="collapse"/></ToolbarButton></div><CategoryTree categories={workspace?.categories ?? []} posts={posts} expanded={expanded} activePostId={post?.id} lang={lang} repositoryKey={workspace?.repository.key??''} onToggle={(id) => updateStored({ expanded: expanded.has(id) ? [...expanded].filter((item) => item !== id) : [...expanded, id] })} onOpen={(item, event) => void openPost(item, event)}/></>}
+        {stored.activity === 'search' && <div className="search-panel"><label className="search-input"><Icon name="search"/><input autoFocus value={stored.query} onChange={(event) => updateStored({ query: event.target.value })} placeholder={t(lang, 'searchPlaceholder')}/></label>{searchError && <p className="search-error" role="alert">{searchError}</p>}<div className="search-results">{visibleResults.map(({ post: item, snippet }) => <button key={item.id} onClick={() => void openPost(item)}><strong>{item.title}</strong><span dangerouslySetInnerHTML={{ __html: snippet }}/></button>)}{stored.query.trim() && !searchError && !visibleResults.length && <p className="panel-empty">{t(lang, 'noSearchResults')}</p>}</div></div>}
         {stored.activity === 'featured' && <div className="featured-list">{posts.filter((item) => item.featured).map((item) => <button key={item.id} onClick={() => void openPost(item)}><Icon name="star"/><span>{item.title}</span></button>)}</div>}
-        {stored.activity === 'tags' && <div className="tag-overview">{post?.tags.map((tag) => <button key={tag} onClick={() => updateStored({ activity: 'search', query: `tag:${tag}` })}><Icon name="tag"/><span>#{tag}</span></button>)}{!post?.tags.length && <p className="panel-empty">{lang === 'zh' ? '当前文章没有标签。' : 'This article has no tags.'}</p>}</div>}
+        {stored.activity === 'tags' && <div className="tag-overview">{post?.tags.map((tag) => <button key={tag} onClick={() => updateStored({ activity: 'search', query: `tag:${tag}` })}><Icon name="tag"/><span>#{tag}</span></button>)}{!post?.tags.length && <p className="panel-empty">{t(lang, 'noArticleTags')}</p>}</div>}
       </section>
-      <div className="repository-switcher"><select value={workspace?.repository.key ?? ''} onChange={(event) => void switchRepository(event.target.value)} aria-label="切换仓库">{repositories.map((repository) => <option value={repository.key} key={repository.id}>{repository.name}</option>)}</select><Icon name="chevron"/></div>
+      <div className="repository-switcher"><select value={workspace?.repository.key ?? ''} onChange={(event) => void switchRepository(event.target.value)} aria-label={t(lang, 'switchRepository')}>{repositories.map((repository) => <option value={repository.key} key={repository.id}>{repository.name}</option>)}</select><Icon name="chevron"/></div>
     </aside>
     <main className="center-pane">
-      <div className="reading-scroll" ref={articleScrollRef} onScroll={onScroll} aria-busy={loading}>{loading && !post && <div className="reading-skeleton"><i/><i/><i/><i/></div>}{post && <ReadingArticle post={post} repositoryName={workspace?.repository.name ?? ''} categories={workspace?.categories??[]} onTag={(tag)=>{updateStored({activity:'search',query:`tag:${tag}`});setMobileLeft(true);}} onNavigate={navigateArticleLink}/>} {readingIssue && post && <div className="reading-notice" role="status"><Icon name="file"/><span>{readingIssue.message}</span><button onClick={() => setReadingIssue(null)} aria-label={lang === 'zh' ? '关闭提示' : 'Dismiss'}><Icon name="close"/></button></div>}{!loading && !post && <div className="empty-reading"><Icon name="file"/><h1>{readingIssue?.kind === 'not-found' ? t(lang, 'fileMissing') : readingIssue?.kind === 'error' ? (lang === 'zh' ? '暂时无法载入' : 'Unable to load') : workspace?.posts.length ? (lang === 'zh' ? '选择一篇文章' : 'Select an article') : t(lang, 'emptyRepository')}</h1>{readingIssue && <p>{readingIssue.message}</p>}</div>}</div>
+      <div className="reading-scroll" ref={articleScrollRef} onScroll={onScroll} aria-busy={loading}>{loading && !post && <div className="reading-skeleton"><i/><i/><i/><i/></div>}{post && <ReadingArticle post={post} repositoryName={workspace?.repository.name ?? ''} categories={workspace?.categories??[]} lang={lang} onTag={(tag)=>{updateStored({activity:'search',query:`tag:${tag}`});setMobileLeft(true);}} onNavigate={navigateArticleLink}/>} {readingIssue && post && <div className="reading-notice" role="status"><Icon name="file"/><span>{issueMessage}</span><button onClick={() => setReadingIssue(null)} aria-label={t(lang, 'dismiss')}><Icon name="close"/></button></div>}{!loading && !post && <div className="empty-reading"><Icon name="file"/><h1>{readingIssue?.kind === 'not-found' ? t(lang, 'fileMissing') : readingIssue ? t(lang, 'unableToLoad') : workspace?.posts.length ? t(lang, 'selectArticle') : t(lang, 'emptyRepository')}</h1>{issueMessage && <p>{issueMessage}</p>}</div>}</div>
     </main>
     <aside className={`right-sidebar ${mobileRight ? 'mobile-open' : ''}`}>
       <nav className="right-tools"><ToolbarButton label={t(lang, 'outline')} active={stored.rightTool === 'outline' && !stored.rightCollapsed} onClick={() => selectRightTool('outline')}><Icon name="outline"/></ToolbarButton><ToolbarButton label={t(lang, 'properties')} active={stored.rightTool === 'properties' && !stored.rightCollapsed} onClick={() => selectRightTool('properties')}><Icon name="properties"/></ToolbarButton><ToolbarButton label={t(lang, 'backlinks')} active={stored.rightTool === 'backlinks' && !stored.rightCollapsed} onClick={() => selectRightTool('backlinks')}><Icon name="backlinks"/></ToolbarButton></nav>
-      <section className="right-panel">{stored.rightTool === 'outline' && <><h2>{t(lang, 'outline')}</h2><nav className="outline-list">{outline.map((heading) => <a key={heading.id} href={`#${heading.id}`} data-active={heading.id === activeHeading || undefined} aria-current={heading.id === activeHeading ? 'location' : undefined} style={{ '--level': heading.level } as React.CSSProperties}>{heading.text}</a>)}</nav></>}{stored.rightTool === 'properties' && <><h2>{t(lang, 'properties')}</h2>{post && <dl className="property-list"><dt>仓库</dt><dd>{workspace?.repository.name}</dd><dt>分类</dt><dd>{categoryPath(post.categoryId,workspace?.categories??[]).join(' / ')||'仓库根目录'}</dd><dt>语言</dt><dd>{post.language}</dd><dt>首次发布</dt><dd>{post.firstPublishedAt?.slice(0,10)}</dd><dt>最后更新</dt><dd>{post.lastPublishedAt?.slice(0,10)}</dd><dt>标签</dt><dd>{post.tags.join(' · ') || '—'}</dd><dt>字数</dt><dd>{post.wordCount}</dd>{Object.entries(post.customProperties).map(([key,value]) => <><dt key={`${key}-k`}>{key}</dt><dd key={`${key}-v`}>{String(value)}</dd></>)}</dl>}</>}{stored.rightTool === 'backlinks' && <><h2>{t(lang, 'backlinks')} <small>{post?.backlinks.length ?? 0}</small></h2><div className="backlink-list">{post?.backlinks.map((link) => <a href={link.url} key={link.postId}><strong>{link.title}</strong><span>{link.repositoryName}</span></a>)}</div></>}</section>
-      <div className="reading-progress" title="0%" role="progressbar" aria-label={lang === 'zh' ? '阅读进度' : 'Reading progress'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i ref={progressRef}/></div>
+      <section className="right-panel">{stored.rightTool === 'outline' && <><h2>{t(lang, 'outline')}</h2><nav className="outline-list">{outline.map((heading) => <a key={heading.id} href={`#${heading.id}`} data-active={heading.id === activeHeading || undefined} aria-current={heading.id === activeHeading ? 'location' : undefined} style={{ '--level': heading.level } as React.CSSProperties}>{heading.text}</a>)}</nav></>}{stored.rightTool === 'properties' && <><h2>{t(lang, 'properties')}</h2>{post && <dl className="property-list"><dt>{t(lang, 'repository')}</dt><dd>{workspace?.repository.name}</dd><dt>{t(lang, 'category')}</dt><dd>{categoryPath(post.categoryId,workspace?.categories??[]).join(' / ') || t(lang, 'repositoryRoot')}</dd><dt>{t(lang, 'language')}</dt><dd>{formatLanguage(post.language, lang)}</dd><dt>{t(lang, 'firstPublished')}</dt><dd>{post.firstPublishedAt?.slice(0,10)}</dd><dt>{t(lang, 'lastUpdated')}</dt><dd>{post.lastPublishedAt?.slice(0,10)}</dd><dt>{t(lang, 'tags')}</dt><dd>{post.tags.join(' · ') || '—'}</dd><dt>{t(lang, 'wordCount')}</dt><dd>{post.wordCount}</dd>{Object.entries(post.customProperties).map(([key,value]) => <><dt key={`${key}-k`}>{key}</dt><dd key={`${key}-v`}>{String(value)}</dd></>)}</dl>}</>}{stored.rightTool === 'backlinks' && <><h2>{t(lang, 'backlinks')} <small>{post?.backlinks.length ?? 0}</small></h2><div className="backlink-list">{post?.backlinks.map((link) => <a href={link.url} key={link.postId}><strong>{link.title}</strong><span>{link.repositoryName}</span></a>)}</div></>}</section>
+      <div className="reading-progress" title="0%" role="progressbar" aria-label={t(lang, 'readingProgress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i ref={progressRef}/></div>
     </aside>
     <footer className="status-bar"><span>{post?.wordCount ?? 0} {t(lang, 'words')}</span><span>{post?.characterCount ?? 0} {t(lang, 'characters')}</span></footer>
-    <PageCurlCorner/>
-    {mobileTabs && <section className="mobile-tab-overview" aria-label={lang === 'zh' ? '标签页概览' : 'Tab overview'}><header><strong>{lang === 'zh' ? '打开的文章' : 'Open articles'}</strong><button aria-label={lang === 'zh' ? '关闭概览' : 'Close overview'} onClick={() => setMobileTabs(false)}><Icon name="close"/></button></header><div>{stored.tabs.map((tab) => <article key={tab.postId} data-active={tab.postId === stored.activePostId || undefined}><button onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); setMobileTabs(false); }}><Icon name="file"/><span>{tab.title}</span></button><button aria-label={lang === 'zh' ? `关闭 ${tab.title}` : `Close ${tab.title}`} onClick={() => closeTab(tab.postId)}><Icon name="close"/></button></article>)}</div></section>}
-    {(mobileLeft || mobileRight || mobileTabs) && <button className="drawer-scrim" aria-label="关闭侧栏" onClick={() => { setMobileLeft(false); setMobileRight(false); setMobileTabs(false); }}/>}<div className="sr-only" aria-live="polite">{loading ? '正在载入文章' : activeTab?.title}</div>
+    <PageCurlCorner lang={lang}/>
+    {mobileTabs && <section className="mobile-tab-overview" aria-label={t(lang, 'tabOverview')}><header><strong>{t(lang, 'openArticles')}</strong><button aria-label={t(lang, 'closeOverview')} onClick={() => setMobileTabs(false)}><Icon name="close"/></button></header><div>{stored.tabs.map((tab) => <article key={tab.postId} data-active={tab.postId === stored.activePostId || undefined}><button onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); setMobileTabs(false); }}><Icon name="file"/><span>{tab.title}</span></button><button aria-label={`${t(lang, 'closeTab')}: ${tab.title}`} onClick={() => closeTab(tab.postId)}><Icon name="close"/></button></article>)}</div></section>}
+    {(mobileLeft || mobileRight || mobileTabs) && <button className="drawer-scrim" aria-label={t(lang, 'closeSidebar')} onClick={() => { setMobileLeft(false); setMobileRight(false); setMobileTabs(false); }}/>}<div className="sr-only" aria-live="polite">{loading ? t(lang, 'loadingArticle') : activeTab?.title}</div>
   </div>;
 }
 
 function mergeTab(tabs: Tab[], post: Pick<PostDetail, 'id' | 'slug' | 'title'>): Tab[] { return tabs.some((tab) => tab.postId === post.id) ? tabs.map((tab) => tab.postId === post.id ? { postId: post.id, slug: post.slug, title: post.title } : tab) : [...tabs, { postId: post.id, slug: post.slug, title: post.title }]; }
 function replaceActiveTab(tabs: Tab[], activeId: string | null, post: Pick<PostDetail, 'id'|'slug'|'title'>): Tab[] { if (!tabs.length || !activeId) return mergeTab(tabs, post); return tabs.map((tab) => tab.postId === activeId ? { postId: post.id, slug: post.slug, title: post.title } : tab).filter((tab, index, all) => all.findIndex((item) => item.postId === tab.postId) === index); }
 function reorderTabs(tabs:Tab[],sourceId:string,targetId:string):Tab[]{if(!sourceId||sourceId===targetId)return tabs;const source=tabs.find((tab)=>tab.postId===sourceId);if(!source)return tabs;const next=tabs.filter((tab)=>tab.postId!==sourceId);const targetIndex=next.findIndex((tab)=>tab.postId===targetId);next.splice(targetIndex<0?next.length:targetIndex,0,source);return next;}
+function localizeArticleSystemText(article: HTMLElement, lang: InterfaceLanguage): void {
+  article.querySelectorAll<HTMLElement>('.unresolved-link').forEach((link) => {
+    const marker = link.querySelector<HTMLElement>('[data-ui="unresolved"], small');
+    if (marker) { marker.textContent = t(lang, 'unresolved'); return; }
+    for (const node of link.childNodes) if (node.nodeType === Node.TEXT_NODE && /(?:未解析|Unresolved)\s*$/.test(node.nodeValue ?? '')) node.nodeValue = (node.nodeValue ?? '').replace(/(?:未解析|Unresolved)\s*$/, t(lang, 'unresolved'));
+  });
+  article.querySelectorAll<HTMLElement>('.article-embed > header > span, .article-embed > span').forEach((node) => { node.textContent = t(lang, 'articleEmbed'); });
+  article.querySelectorAll<HTMLElement>('.filtered-media').forEach((node) => { node.textContent = t(lang, 'filteredMedia'); });
+  article.querySelectorAll<HTMLAnchorElement>('.embed-consent, a[data-provider][data-url]').forEach((link) => {
+    const hint = link.querySelector<HTMLElement>('span');
+    const provider = link.dataset.provider;
+    const raw = link.dataset.url;
+    if (!hint || !provider || !raw) return;
+    try { hint.textContent = `${provider} · ${new URL(raw).hostname} · ${t(lang, 'loadOnClick')}`; } catch { /* 无效地址仍保留发布快照中的安全文本。 */ }
+  });
+}
 function nextSort(mode: SortMode): SortMode { const modes: SortMode[] = ['published-desc','published-asc','modified-desc','modified-asc','title-asc','title-desc']; return modes[(modes.indexOf(mode)+1)%modes.length] ?? 'published-desc'; }
-function sortModeLabel(mode: SortMode, lang: string): string { const labels: Record<SortMode, [string, string]> = { 'published-desc':['首次发布 ↓','Published ↓'], 'published-asc':['首次发布 ↑','Published ↑'], 'modified-desc':['最后修改 ↓','Modified ↓'], 'modified-asc':['最后修改 ↑','Modified ↑'], 'title-asc':['标题 A–Z','Title A–Z'], 'title-desc':['标题 Z–A','Title Z–A'] }; return labels[mode][lang === 'zh' ? 0 : 1]; }
+function sortModeLabel(mode: SortMode, lang: InterfaceLanguage): string { const labels: Record<SortMode, [string, string]> = { 'published-desc':['首次发布 ↓','Published ↓'], 'published-asc':['首次发布 ↑','Published ↑'], 'modified-desc':['最后修改 ↓','Modified ↓'], 'modified-asc':['最后修改 ↑','Modified ↑'], 'title-asc':['标题 A–Z','Title A–Z'], 'title-desc':['标题 Z–A','Title Z–A'] }; return labels[mode][lang === 'zh' ? 0 : 1]; }
+function categorySummary(postCount: number, categoryCount: number, lang: InterfaceLanguage): string {
+  const postUnit = t(lang, postCount === 1 ? 'postUnit' : 'postsUnit');
+  const categoryUnit = t(lang, categoryCount === 1 ? 'categoryUnit' : 'categoriesUnit');
+  return lang === 'zh' ? `${postCount} ${postUnit}，${categoryCount} ${categoryUnit}` : `${postCount} ${postUnit}, ${categoryCount} ${categoryUnit}`;
+}
+function formatLanguage(code: string, lang: InterfaceLanguage): string {
+  try {
+    const name = new Intl.DisplayNames([lang === 'zh' ? 'zh-CN' : 'en'], { type: 'language', fallback: 'code' }).of(code);
+    return name && name !== code ? `${name} · ${code}` : code;
+  } catch { return code; }
+}
+function readingIssueText(kind: ReadingIssue['kind'], lang: InterfaceLanguage): string {
+  if (kind === 'not-found') return t(lang, 'fileMissingHint');
+  return t(lang, kind === 'repository-error' ? 'repositoryUnavailable' : 'postUnavailable');
+}
 function revealCategory(categoryId: string | null | undefined, categories: Category[], update: (patch: Partial<StoredWorkspace>) => void, current: Set<string>) { const byId = new Map(categories.map((category) => [category.id, category])); let id = categoryId; const next = new Set(current); while (id) { next.add(id); id = byId.get(id)?.parentId ?? null; } update({ expanded: [...next] }); }
 function categoryPath(categoryId:string|null,categories:Category[]):string[]{const byId=new Map(categories.map((category)=>[category.id,category]));const result:string[]=[];const seen=new Set<string>();let id=categoryId;while(id&&!seen.has(id)){seen.add(id);const category=byId.get(id);if(!category)break;result.unshift(category.name);id=category.parentId;}return result;}
 function extractOutline(html: string): Array<{ id: string; text: string; level: number }> { if (!html) return []; const template = document.createElement('template'); template.innerHTML = html; return [...template.content.querySelectorAll<HTMLHeadingElement>('h1,h2,h3,h4,h5,h6')].map((heading) => ({ id: heading.id, text: heading.textContent ?? '', level: Number(heading.tagName.slice(1)) })); }

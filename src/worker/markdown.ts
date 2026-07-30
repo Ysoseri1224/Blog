@@ -48,11 +48,11 @@ function normalizeWikiLinks(markdown: string, targets: ReadonlyMap<string, { url
       const target = targetRaw.trim();
       const resolved = targets.get(target) ?? null;
       const label = (labelRaw || resolved?.title || target).trim();
-      if (!resolved) return `<span class="unresolved-link" data-target="${escapeHtml(target)}">${escapeHtml(label)} <small>未解析</small></span>`;
+      if (!resolved) return `<span class="unresolved-link" data-target="${escapeHtml(target)}">${escapeHtml(label)} <span data-ui="unresolved">未解析</span></span>`;
       const url = `${resolved.url}${headingRaw ? `#${encodeURIComponent(slugify(headingRaw))}` : ''}`;
       if (embed) return resolved.html
-        ? `<aside class="article-embed article-embed-expanded"><header><a href="${escapeHtml(url)}">${escapeHtml(label)}</a><span>文章嵌入</span></header><section class="embedded-markdown">${resolved.html}</section></aside>`
-        : `<aside class="article-embed"><a href="${escapeHtml(url)}">${escapeHtml(label)}</a><span>文章嵌入</span></aside>`;
+        ? `<aside class="article-embed article-embed-expanded"><header><a href="${escapeHtml(url)}">${escapeHtml(label)}</a><span data-ui="article-embed">文章嵌入</span></header><section class="embedded-markdown">${resolved.html}</section></aside>`
+        : `<aside class="article-embed"><a href="${escapeHtml(url)}">${escapeHtml(label)}</a><span data-ui="article-embed">文章嵌入</span></aside>`;
       return `[${label.replaceAll(']', '\\]')}](${url})`;
     });
   }).join('\n');
@@ -90,7 +90,7 @@ function normalizeEmbeds(markdown: string): string {
       const url = new URL(urlRaw);
       const provider = providerHosts.get(url.hostname);
       if (!provider || url.protocol !== 'https:') return `[${labelRaw || url.hostname}](${url.toString()})`;
-      return `<a class="embed-consent" href="${escapeHtml(url.toString())}" data-provider="${provider}" data-url="${escapeHtml(url.toString())}"><strong>${escapeHtml(labelRaw || provider)}</strong><span>${escapeHtml(provider)} · ${escapeHtml(url.hostname)} · 点击后加载</span></a>`;
+      return `<a class="embed-consent" href="${escapeHtml(url.toString())}" data-provider="${provider}" data-url="${escapeHtml(url.toString())}"><strong>${escapeHtml(labelRaw || provider)}</strong><span data-ui="embed-consent-hint">${escapeHtml(provider)} · 点击后加载</span></a>`;
     } catch {
       return escapeHtml(labelRaw || urlRaw);
     }
@@ -109,10 +109,10 @@ const schema: Schema = {
   ],
   attributes: {
     ...defaultSchema.attributes,
-    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className', 'id', 'title', 'ariaLabel', 'ariaHidden', 'role'],
-    a: [...(defaultSchema.attributes?.a ?? []), 'target', 'rel', 'dataProvider', 'dataUrl'],
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className', 'id', 'title', 'ariaLabel', 'ariaHidden', 'role', 'dataUi'],
+    a: [...(defaultSchema.attributes?.a ?? []).filter((attribute) => !(Array.isArray(attribute) && attribute[0] === 'className')), 'className', 'target', 'rel', 'dataProvider', 'dataUrl'],
     button: ['type', 'className', 'dataProvider', 'dataUrl', 'ariaLabel'],
-    span: ['className', 'dataTarget', 'ariaHidden'],
+    span: ['className', 'dataTarget', 'dataUi', 'ariaHidden'],
     code: [...(defaultSchema.attributes?.code ?? []), ['className', /^language-/]],
     audio: ['controls', 'preload', 'src'],
     video: ['controls', 'preload', 'src', 'poster', 'width', 'height'],
@@ -126,6 +126,20 @@ const schema: Schema = {
     src: ['http', 'https'],
   },
 };
+
+function restoreEmbedConsentHints() {
+  return (tree: Root): void => {
+    visit(tree, 'element', (node: Element) => {
+      if (node.tagName !== 'a' || typeof node.properties.dataProvider !== 'string' || typeof node.properties.dataUrl !== 'string') return;
+      const hint = node.children.find((child): child is Element => child.type === 'element' && child.tagName === 'span' && child.properties.dataUi === 'embed-consent-hint');
+      if (!hint) return;
+      try {
+        const hostname = new URL(node.properties.dataUrl).hostname;
+        hint.children = [{ type: 'text', value: `${node.properties.dataProvider} · ${hostname} · 点击后加载` }];
+      } catch { /* 非法 URL 会在后续清洗中保留为普通安全链接。 */ }
+    });
+  };
+}
 
 function trustedMediaUrl(value: unknown): boolean {
   return typeof value === 'string' && /^\/api\/public\/media\/[0-9a-f-]{36}$/i.test(value);
@@ -146,7 +160,7 @@ function restrictRawMediaUrls() {
       const removedSource = children.length !== node.children.length;
       if (unsafeDirect || unsafePoster || (removedSource && !trustedMediaUrl(directSource) && !children.some((child) => child.type === 'element' && child.tagName === 'source'))) {
         const replacement: Element = {
-          type: 'element', tagName: 'span', properties: { className: ['filtered-media'] },
+          type: 'element', tagName: 'span', properties: { className: ['filtered-media'], dataUi: 'filtered-media' },
           children: [{ type: 'text', value: '媒体地址未使用站内受控资源，已停止加载。' }],
         };
         parent.children[index] = replacement as RootContent;
@@ -168,6 +182,7 @@ export async function renderMarkdown(markdown: string, options: MarkdownOptions 
     .use(remarkMath)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeRaw)
+    .use(restoreEmbedConsentHints)
     .use(restrictRawMediaUrls)
     .use(rehypeSanitize, schema)
     .use(rehypeSlug)

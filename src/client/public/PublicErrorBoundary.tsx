@@ -1,4 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { t } from '../../shared/i18n';
+import type { InterfaceLanguage } from '../../shared/types';
 
 interface Props { children: ReactNode; }
 interface State { failed: boolean; }
@@ -17,13 +19,14 @@ export class PublicErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (!this.state.failed) return this.props.children;
+    const lang: InterfaceLanguage = document.documentElement.lang.toLowerCase().startsWith('en') ? 'en' : 'zh';
     return <main className="public-error-fallback" role="alert">
       <p>blog · ysoseri.us</p>
-      <h1>阅读工作区没有正确载入</h1>
-      <span>文章仍然保存在服务器；可以刷新页面重新建立阅读现场。</span>
+      <h1>{t(lang, 'publicWorkspaceLoadFailed')}</h1>
+      <span>{t(lang, 'publicWorkspaceLoadHint')}</span>
       <div>
-        <button className="primary-button" onClick={() => location.reload()}>重新载入</button>
-        <a className="secondary-button" href="/">返回博客</a>
+        <button className="primary-button" onClick={() => location.reload()}>{t(lang, 'reload')}</button>
+        <a className="secondary-button" href="/">{t(lang, 'backToBlog')}</a>
       </div>
     </main>;
   }

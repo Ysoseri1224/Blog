@@ -1,4 +1,5 @@
-import type { AppBootstrap, PostDetail, Repository, RepositoryWorkspace } from '../shared/types';
+import { t } from '../shared/i18n';
+import type { AppBootstrap, InterfaceLanguage, PostDetail, Repository, RepositoryWorkspace } from '../shared/types';
 import { sha256Hex } from './crypto';
 
 function escapeHtml(value: string): string {
@@ -38,13 +39,23 @@ function fallbackTree(workspace: RepositoryWorkspace | null): string {
   return `${renderCategories(null, new Set())}${rootPosts}`;
 }
 
-function publicFallback(repositories: Repository[], workspace: RepositoryWorkspace | null, post: PostDetail | null, notFound: boolean): string {
+function localizePublishedSystemHtml(html: string, lang: InterfaceLanguage): string {
+  if (lang === 'zh') return html;
+  return html
+    .replace(/(<span class="unresolved-link"[^>]*>[^<]*?)未解析(<\/span>)/g, `$1${t(lang, 'unresolved')}$2`)
+    .replace(/(<span data-ui="unresolved">)未解析(<\/span>)/g, `$1${t(lang, 'unresolved')}$2`)
+    .replaceAll('>文章嵌入</span>', `>${t(lang, 'articleEmbed')}</span>`)
+    .replaceAll(' · 点击后加载', ` · ${t(lang, 'loadOnClick')}`)
+    .replaceAll('>媒体地址未使用站内受控资源，已停止加载。</span>', `>${t(lang, 'filteredMedia')}</span>`);
+}
+
+function publicFallback(repositories: Repository[], workspace: RepositoryWorkspace | null, post: PostDetail | null, notFound: boolean, lang: InterfaceLanguage): string {
   const repositoryLinks = repositories.map((repository) => `<a href="/${escapeHtml(repository.key)}/">${escapeHtml(repository.name)}</a>`).join('');
   const tree = fallbackTree(workspace);
   const displayPath = post && workspace ? [workspace.repository.name, ...categoryPath(workspace, post.categoryId), post.title].join(' / ') : '';
   const article = post
-    ? `<article class="markdown-body"><p class="display-path">${escapeHtml(displayPath)}</p><h1>${escapeHtml(post.title)}</h1>${post.html ?? ''}</article>`
-    : `<section class="empty-reading"><h1>${notFound ? '文件不存在' : escapeHtml(workspace?.repository.name ?? 'Blog')}</h1><p>${notFound ? '它可能尚未发布、已撤回，或不属于你可以进入的仓库。' : '这里还没有公开文章。'}</p></section>`;
+    ? `<article class="markdown-body"><p class="display-path">${escapeHtml(displayPath)}</p><h1>${escapeHtml(post.title)}</h1>${localizePublishedSystemHtml(post.html ?? '', lang)}</article>`
+    : `<section class="empty-reading"><h1>${notFound ? t(lang, 'fileMissing') : escapeHtml(workspace?.repository.name ?? 'Blog')}</h1><p>${notFound ? t(lang, 'fileMissingHint') : t(lang, 'emptyRepository')}</p></section>`;
   return `<div class="app-shell server-fallback"><header class="top-chrome"><a href="https://ysoseri.us">ysoseri.us</a><nav>${repositoryLinks}</nav></header><aside class="left-sidebar"><h2>${escapeHtml(workspace?.repository.name ?? 'Blog')}</h2><ul>${tree}</ul></aside><main class="reading-pane">${article}</main></div>`;
 }
 
@@ -77,7 +88,7 @@ export async function renderDocument(request: Request, env: Env, options: Docume
   let html = await shellResponse.text();
   const fallback = options.bootstrap.kind === 'manage'
     ? manageFallback(options.bootstrap.authenticated)
-    : publicFallback(options.repositories ?? [], options.workspace ?? null, options.post ?? null, options.notFound ?? false);
+    : publicFallback(options.repositories ?? [], options.workspace ?? null, options.post ?? null, options.notFound ?? false, options.bootstrap.lang);
   const image = options.image ?? `${env.SITE_ORIGIN}/api/public/og/default.svg`;
   const authenticatedManage = options.bootstrap.kind === 'manage' && options.bootstrap.authenticated;
   const needsKatex = authenticatedManage || Boolean(options.post?.html?.includes('class="katex'));
@@ -97,6 +108,7 @@ export async function renderDocument(request: Request, env: Env, options: Docume
     options.post ? `<script type="application/ld+json">${safeJson({ '@context': 'https://schema.org', '@type': 'BlogPosting', headline: options.post.title, datePublished: options.post.firstPublishedAt, dateModified: options.post.lastPublishedAt, mainEntityOfPage: options.canonical, image })}</script>` : '',
   ].join('');
   html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(options.title)}</title>`);
+  html = html.replace(/<html lang="[^"]*"/, `<html lang="${options.bootstrap.lang === 'zh' ? 'zh-CN' : 'en'}"`);
   html = html.replace('</head>', `${head}</head>`);
   html = html.replace(
     /<div id="root">[\s\S]*<\/div>\s*<\/body>/,

@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import type { AppBootstrap } from '../shared/types';
+import { t } from '../shared/i18n';
 import { CursorLayer } from './components/CursorLayer';
 
 async function start(bootstrap: AppBootstrap): Promise<void> {
@@ -24,8 +25,9 @@ async function start(bootstrap: AppBootstrap): Promise<void> {
 const bootstrap = window.__BLOG_BOOTSTRAP__;
 if (bootstrap) {
   void start(bootstrap).catch(() => {
-    document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { className: 'bootstrap-error', textContent: '页面资源没有正确载入，请刷新后重试。' }));
+    document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { className: 'bootstrap-error', textContent: t(bootstrap.lang, 'resourcesLoadFailed') }));
   });
 } else {
-  document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { textContent: '页面数据没有正确载入。' }));
+  const lang = document.documentElement.lang.toLowerCase().startsWith('en') ? 'en' : 'zh';
+  document.getElementById('root')?.replaceChildren(Object.assign(document.createElement('p'), { textContent: t(lang, 'dataLoadFailed') }));
 }
