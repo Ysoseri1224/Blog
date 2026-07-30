@@ -35,6 +35,8 @@ npm run dev:worker
 - `AUTH_PASSWORD_HASH`
 - `IMPORT_EXPORT_SIGNING_KEY`
 
-部署顺序是创建 D1 / R2 资源、替换 `wrangler.jsonc` 中的 D1 ID、应用两座 D1 的迁移、写入 Secret、部署 Worker Custom Domain，最后执行线上鉴权、发布、撤回、搜索、备份与恢复演练。`BACKUP_RETENTION_DAYS` 未确认前不得创建自动删除 Lifecycle。
+部署顺序是创建 D1 / R2 资源、替换 `wrangler.jsonc` 中的 D1 ID、应用两座 D1 的迁移、写入 Secret、部署 Worker Custom Domain，最后执行线上鉴权、发布、撤回、搜索、备份与恢复演练。
+
+`blog-backups` 中的备份对象正式保留 90 天：部署时为整个备份桶配置 90 天 Bucket Lock 和 90 天 Lifecycle 到期清理。Workflow 实例状态按 Cloudflare Workers Paid 的上限保留 30 天；它只是执行记录，不代替 R2 中的 90 天 SQL 备份。
 
 正式恢复步骤见 [docs/restore.md](docs/restore.md)。

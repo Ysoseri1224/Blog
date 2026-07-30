@@ -16,6 +16,7 @@
 同时检查：
 
 - `format` 必须为 `ysoseri-blog-sql-parts-v1`。
+- `retentionDays` 必须为 `90`，并与 `blog-backups` 当前 Bucket Lock / Lifecycle 规则一致。
 - `schemaVersion` 必须是当前代码支持的迁移版本。
 - `excludedTransientTables` 只能包含可安全重建的会话、outbox、删除任务与操作守卫表。
 - `object-references.json` 必须存在并通过 checksum 校验。
@@ -81,6 +82,6 @@ SELECT count(*) FROM posts p LEFT JOIN public_snapshots s ON s.id=p.public_snaps
 
 ## 7. 收尾记录
 
-记录所用 manifest key、manifest checksum、新旧 D1 ID、各表计数、R2 引用校验结果、搜索重建结果、部署 ID、开始/完成时间和操作者。旧库至少保留到人工确认窗口结束；删除旧库和设置备份 Lifecycle 都是独立高风险操作。
+记录所用 manifest key、manifest checksum、新旧 D1 ID、各表计数、R2 引用校验结果、搜索重建结果、部署 ID、开始/完成时间和操作者。旧库至少保留到人工确认窗口结束；删除旧库是独立高风险操作。
 
-`BACKUP_RETENTION_DAYS=UNCONFIRMED` 时不得创建自动删除 Lifecycle，也不得把占位值解释为 30 天。保留周期必须由用户最后单独确认。
+正式保留策略为 90 天。`blog-backups` 必须同时存在覆盖全桶的 90 天 Bucket Lock 和 90 天 Lifecycle；部署及恢复演练均要列出两条规则并核对其天数。Workflow 实例状态最多保留 30 天，只用于查看执行过程，不能当作备份副本。

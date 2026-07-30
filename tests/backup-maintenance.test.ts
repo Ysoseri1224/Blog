@@ -31,9 +31,9 @@ describe('备份 generation 与可靠对象清理', () => {
     expect(manifest).not.toBeNull();
     const body = await manifest!.json<{
       format: string; fingerprint: string; parts: Array<{ key: string; checksum: string }>;
-      excludedTransientTables: string[];
+      excludedTransientTables: string[]; retentionDays: number;
     }>();
-    expect(body).toMatchObject({ format: 'ysoseri-blog-sql-parts-v1', fingerprint: result.fingerprint });
+    expect(body).toMatchObject({ format: 'ysoseri-blog-sql-parts-v1', fingerprint: result.fingerprint, retentionDays: 90 });
     expect(body.excludedTransientTables).toEqual(expect.arrayContaining(['operation_assertions', 'object_deletion_queue']));
     for (const part of body.parts) expect(await env.BLOG_BACKUPS.head(part.key)).not.toBeNull();
   });

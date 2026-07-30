@@ -12,6 +12,12 @@ const schemaTables = [
 const transientTables = new Set(['sessions','auth_attempts','outbox','deletion_jobs','operation_assertions','object_deletion_queue']);
 const pageSize = 10;
 
+function backupRetentionDays(env: Env): number {
+  const days = Number(env.BACKUP_RETENTION_DAYS);
+  if (!Number.isInteger(days) || days <= 0) throw new Error('BACKUP_RETENTION_DAYS 必须是正整数');
+  return days;
+}
+
 function quoteIdentifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
 
 function sqlLiteral(value: unknown): string {
@@ -101,6 +107,7 @@ async function objectReferencePart(env: Env, prefix: string): Promise<BackupPart
 }
 
 export async function runBackupWorkflow(env: Env, scheduledTime: number, step: WorkflowStep): Promise<unknown> {
+    const retentionDays = backupRetentionDays(env);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const prepared = await step.do(`attempt ${attempt}: prepare`, { retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '2 minutes' },
         () => prepareBackup(env, scheduledTime, attempt));
@@ -132,11 +139,14 @@ export async function runBackupWorkflow(env: Env, scheduledTime: number, step: W
       const manifestBody = JSON.stringify({
         format: 'ysoseri-blog-sql-parts-v1', generatedAt: prepared.generatedAt, completedAt: new Date().toISOString(),
         source: 'blog-content', schemaVersion: prepared.schemaVersion, fingerprint: prepared.fingerprint,
+        retentionDays,
         tables: prepared.tables, excludedTransientTables: [...transientTables], parts,
         partsChecksum: await sha256Hex(JSON.stringify(parts.map((part) => part.checksum))),
         restore: 'Concatenate SQL parts in manifest order, import into a new D1 database, verify counts and R2 references, then rebuild blog-search.',
       }, null, 2);
-      const manifest = await step.do(`attempt ${attempt}: manifest`, () => putPart(env, `${prepared.prefix}/manifest.json`, manifestBody, { kind: 'manifest', schemaVersion: prepared.schemaVersion }));
+      const manifest = await step.do(`attempt ${attempt}: manifest`, () => putPart(env, `${prepared.prefix}/manifest.json`, manifestBody, {
+        kind: 'manifest', schemaVersion: prepared.schemaVersion, retentionDays: String(retentionDays),
+      }));
       return { manifest: manifest.key, parts: parts.length, fingerprint: prepared.fingerprint };
     }
     throw new Error('内容在三次备份窗口中持续变化；未生成可能不一致的备份');
