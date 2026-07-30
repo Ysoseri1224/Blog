@@ -9,10 +9,10 @@ try {
   const password = await terminal.question('输入作者密码（终端可能显示输入）：');
   if (!password) throw new Error('密码不能为空');
   const salt = randomBytes(24);
-  const iterations = 210_000;
+  // Cloudflare Workers Web Crypto 当前最多接受 100,000 次 PBKDF2 迭代。
+  const iterations = 100_000;
   const hash = await derive(password, salt, iterations, 32, 'sha256');
   stdout.write(`\npbkdf2$${iterations}$${salt.toString('hex')}$${hash.toString('hex')}\n`);
 } finally {
   terminal.close();
 }
-

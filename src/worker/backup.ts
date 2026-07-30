@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { sha256Hex } from './crypto';
 
-interface BackupParams { scheduledTime: number; }
+interface BackupParams { scheduledTime?: number; }
 interface BackupPart { key: string; checksum: string; bytes: number; table?: string; rows?: number; }
 interface BackupPreparation { generatedAt: string; prefix: string; schemaVersion: string; tables: Array<{ name: string; count: number }>; schemaSql: string; indexSql: string; fingerprint: string; }
 
@@ -11,6 +11,10 @@ const schemaTables = [
 ] as const;
 const transientTables = new Set(['sessions','auth_attempts','outbox','deletion_jobs','operation_assertions','object_deletion_queue']);
 const pageSize = 10;
+
+export function resolveBackupTime(scheduledTime: unknown, fallback = Date.now()): number {
+  return typeof scheduledTime === 'number' && Number.isFinite(scheduledTime) && scheduledTime > 0 ? scheduledTime : fallback;
+}
 
 function backupRetentionDays(env: Env): number {
   const days = Number(env.BACKUP_RETENTION_DAYS);
@@ -154,7 +158,7 @@ export async function runBackupWorkflow(env: Env, scheduledTime: number, step: W
 
 export class BlogBackupWorkflow extends WorkflowEntrypoint<Env, BackupParams> {
   async run(event: Readonly<WorkflowEvent<BackupParams>>, step: WorkflowStep): Promise<unknown> {
-    return runBackupWorkflow(this.env, event.payload.scheduledTime, step);
+    return runBackupWorkflow(this.env, resolveBackupTime(event.payload?.scheduledTime), step);
   }
 }
 

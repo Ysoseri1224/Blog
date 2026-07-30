@@ -40,7 +40,8 @@ export function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean 
 export async function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
   const [algorithm, iterationsRaw, saltHex, expectedHex] = encodedHash.split('$');
   const iterations = Number.parseInt(iterationsRaw ?? '', 10);
-  if (algorithm !== 'pbkdf2' || !Number.isSafeInteger(iterations) || iterations < 100_000 || !saltHex || !expectedHex) return false;
+  // Cloudflare Workers Web Crypto 当前最多接受 100,000 次 PBKDF2 迭代。
+  if (algorithm !== 'pbkdf2' || iterations !== 100_000 || !saltHex || !expectedHex) return false;
   try {
     const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
     const actual = await crypto.subtle.deriveBits(
@@ -55,7 +56,7 @@ export async function verifyPassword(password: string, encodedHash: string): Pro
   }
 }
 
-export async function hashPassword(password: string, iterations = 210_000): Promise<string> {
+export async function hashPassword(password: string, iterations = 100_000): Promise<string> {
   const salt = new Uint8Array(24); crypto.getRandomValues(salt);
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   const derived = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, 256);

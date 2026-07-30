@@ -2,6 +2,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "ysoseri-blog",
   "main": "src/worker/index.ts",
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
   "routes": [
@@ -16,13 +18,13 @@
     {
       "binding": "CONTENT_DB",
       "database_name": "blog-content",
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_id": "dc5f84c4-eb35-4a54-8bd2-74a2d896f0be",
       "migrations_dir": "migrations/content"
     },
     {
       "binding": "SEARCH_DB",
       "database_name": "blog-search",
-      "database_id": "00000000-0000-0000-0000-000000000002",
+      "database_id": "96350d46-a9be-4df4-8876-16712661681e",
       "migrations_dir": "migrations/search"
     }
   ],

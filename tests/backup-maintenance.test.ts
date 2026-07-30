@@ -1,9 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import { runBackupWorkflow } from '../src/worker/backup';
+import { resolveBackupTime, runBackupWorkflow } from '../src/worker/backup';
 import { retryObjectDeletionQueue } from '../src/worker/maintenance';
 
 describe('备份 generation 与可靠对象清理', () => {
+  it('API 手动触发缺少 scheduledTime 时使用当前 UTC 时间', () => {
+    const fallback = Date.UTC(2026, 6, 30, 3, 0, 0);
+    expect(resolveBackupTime(undefined, fallback)).toBe(fallback);
+    expect(resolveBackupTime(Date.UTC(2026, 6, 29, 3, 0, 0), fallback)).toBe(Date.UTC(2026, 6, 29, 3, 0, 0));
+  });
+
   it('备份期间内容变化会丢弃整次快照并从新的 generation 重试', async () => {
     const scheduledTime = Date.UTC(2026, 6, 29, 3, 0, 0);
     let changed = false;

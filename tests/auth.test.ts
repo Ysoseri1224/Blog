@@ -73,6 +73,6 @@ describe('作者鉴权', () => {
     expect(oldPassword.status).toBe(401);
     await expect(login(newPassword)).resolves.toMatchObject({ cookie: expect.stringContaining('__Host-blog_session=') });
     const stored = await env.CONTENT_DB.prepare("SELECT value_json FROM settings WHERE key='auth_password_hash'").first<{ value_json: string }>();
-    expect(JSON.parse(stored?.value_json ?? 'null')).toMatch(/^pbkdf2\$210000\$/);
+    expect(JSON.parse(stored?.value_json ?? 'null')).toMatch(/^pbkdf2\$100000\$/);
   });
 });
