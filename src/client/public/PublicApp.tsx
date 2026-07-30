@@ -3,6 +3,7 @@ import type { Category, PostDetail, PostSummary, PublicBootstrap, RepositoryWork
 import { t } from '../../shared/i18n';
 import { ApiError, api } from '../api';
 import { Icon } from '../components/Icon';
+import { PageCurlCorner } from '../components/PageCurlCorner';
 
 type Activity = 'files' | 'search' | 'featured' | 'tags';
 type RightTool = 'outline' | 'properties' | 'backlinks';
@@ -37,27 +38,6 @@ function sortPosts(posts: PostSummary[], mode: SortMode, lang: string): PostSumm
     const right = modified ? b.updatedAt : b.firstPublishedAt ?? '';
     return left.localeCompare(right) * (mode.endsWith('asc') ? 1 : -1) || a.id.localeCompare(b.id);
   });
-}
-
-function CursorLayer() {
-  const ringRef = useRef<HTMLDivElement>(null);
-  const dotRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (matchMedia('(pointer: coarse), (prefers-reduced-motion: reduce)').matches) return;
-    let x = -100; let y = -100; let easedX = x; let easedY = y; let frame = 0;
-    const move = (event: PointerEvent) => {
-      x = event.clientX; y = event.clientY;
-      if (dotRef.current) dotRef.current.style.transform = `translate3d(${x}px,${y}px,0)`;
-      document.documentElement.style.setProperty('--pointer-x', `${x}px`);
-      document.documentElement.style.setProperty('--pointer-y', `${y}px`);
-      const target = event.target instanceof Element ? event.target : null;
-      ringRef.current?.setAttribute('data-cursor', target?.closest('a,button,[role="button"]') ? 'link' : target?.closest('input,textarea,.markdown-body') ? 'text' : 'default');
-    };
-    const animate = () => { easedX += (x - easedX) * .28; easedY += (y - easedY) * .28; if (ringRef.current) ringRef.current.style.transform = `translate3d(${easedX}px,${easedY}px,0)`; frame = requestAnimationFrame(animate); };
-    addEventListener('pointermove', move, { passive: true }); frame = requestAnimationFrame(animate);
-    return () => { removeEventListener('pointermove', move); cancelAnimationFrame(frame); };
-  }, []);
-  return <><div className="cursor-ring" ref={ringRef}/><div className="cursor-dot" ref={dotRef}/><div className="cursor-spotlight"/></>;
 }
 
 function ToolbarButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -161,7 +141,6 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [mobileLeft, setMobileLeft] = useState(false); const [mobileRight, setMobileRight] = useState(false);
   const [mobileTabs, setMobileTabs] = useState(false);
-  const [cornerReady, setCornerReady] = useState(false);
   const requestRef = useRef(0); const articleScrollRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLElement>(null); const scrollFrameRef = useRef(0);
   const [activeHeading, setActiveHeading] = useState('');
@@ -277,7 +256,6 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const activityTitle = stored.activity === 'files' ? t(lang, 'files') : stored.activity === 'search' ? t(lang, 'search') : stored.activity === 'featured' ? t(lang, 'featured') : (lang === 'zh' ? '当前文章标签' : 'Current article tags');
 
   return <div className="app-shell" data-left-collapsed={stored.leftCollapsed || undefined} data-right-collapsed={stored.rightCollapsed || undefined}>
-    <CursorLayer/>
     <header className="top-chrome">
       <div className="top-left"><a className="home-link" href="https://ysoseri.us" aria-label={t(lang, 'backHome')}><Icon name="home"/><span>ysoseri.us</span></a><ToolbarButton label="左侧栏" onClick={() => updateStored({ leftCollapsed: !stored.leftCollapsed })}><Icon name="panel-left"/></ToolbarButton></div>
       <div className="tabs" role="tablist">{stored.tabs.map((tab) => <div className="article-tab" role="tab" aria-selected={tab.postId === stored.activePostId} draggable key={tab.postId} onDragStart={(event)=>event.dataTransfer.setData('text/tab-id',tab.postId)} onDragOver={(event)=>event.preventDefault()} onDrop={(event)=>{event.preventDefault();updateStored({tabs:reorderTabs(stored.tabs,event.dataTransfer.getData('text/tab-id'),tab.postId)});}} onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); }}><Icon name="file"/><span>{tab.title}</span><button aria-label="关闭标签" onClick={(event) => { event.stopPropagation(); closeTab(tab.postId); }}><Icon name="close"/></button></div>)}</div>
@@ -304,7 +282,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
       <div className="reading-progress" title="0%" role="progressbar" aria-label={lang === 'zh' ? '阅读进度' : 'Reading progress'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i ref={progressRef}/></div>
     </aside>
     <footer className="status-bar"><span>{post?.wordCount ?? 0} {t(lang, 'words')}</span><span>{post?.characterCount ?? 0} {t(lang, 'characters')}</span></footer>
-    <div className={`page-corner-zone ${cornerReady ? 'touch-ready' : ''}`} onPointerEnter={(event) => { if (event.pointerType !== 'touch') setCornerReady(true); }} onPointerLeave={(event) => { if (event.pointerType !== 'touch') setCornerReady(false); }} onPointerDown={(event) => { if (event.pointerType === 'touch' && !cornerReady) { event.preventDefault(); setCornerReady(true); setTimeout(() => setCornerReady(false), 2000); } }}><a className="page-corner" href="/manage" aria-label="进入管理" onClick={(event) => { if ('ontouchstart' in window && !cornerReady) event.preventDefault(); }}><span/></a></div>
+    <PageCurlCorner/>
     {mobileTabs && <section className="mobile-tab-overview" aria-label={lang === 'zh' ? '标签页概览' : 'Tab overview'}><header><strong>{lang === 'zh' ? '打开的文章' : 'Open articles'}</strong><button aria-label={lang === 'zh' ? '关闭概览' : 'Close overview'} onClick={() => setMobileTabs(false)}><Icon name="close"/></button></header><div>{stored.tabs.map((tab) => <article key={tab.postId} data-active={tab.postId === stored.activePostId || undefined}><button onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); setMobileTabs(false); }}><Icon name="file"/><span>{tab.title}</span></button><button aria-label={lang === 'zh' ? `关闭 ${tab.title}` : `Close ${tab.title}`} onClick={() => closeTab(tab.postId)}><Icon name="close"/></button></article>)}</div></section>}
     {(mobileLeft || mobileRight || mobileTabs) && <button className="drawer-scrim" aria-label="关闭侧栏" onClick={() => { setMobileLeft(false); setMobileRight(false); setMobileTabs(false); }}/>}<div className="sr-only" aria-live="polite">{loading ? '正在载入文章' : activeTab?.title}</div>
   </div>;
