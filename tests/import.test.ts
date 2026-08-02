@@ -125,11 +125,68 @@ describe('Markdown、文件夹与 ZIP 共用的导入管线', () => {
     expect(commitResponse.status).toBe(201);
     const updated = (await jsonBody<{ posts: PostDetail[] }>(commitResponse)).posts[0]!;
     expect(updated.markdown).toContain('新工作稿');
+    expect(updated.html).toContain('新工作稿');
     expect(updated.publicRevision).toBe(existing.revision);
     const publicPost = await workerRequest('/api/public/post?repository=life&slug=runtime-import-existing');
     expect(publicPost.status).toBe(200);
     expect((await publicPost.json<PostDetail>()).html).toContain('原公开稿');
     expect((await env.CONTENT_DB.prepare("SELECT count(*) AS count FROM post_versions WHERE post_id=?1 AND kind='import' AND permanent=1").bind(existing.id).first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('验证并合并分片渲染产物，供超长文章发布时直接复用', async () => {
+    const session = await login();
+    const existing = await createSavedPost(session, 'runtime-import-chunked');
+    expect((await authorRequest(session, `/api/manage/posts/${existing.id}/publish`, { method: 'POST' })).status).toBe(200);
+    const markdown = `# 分片长文\n\n${'安全渲染内容。'.repeat(8_000)}`;
+    expect(markdown.length).toBeGreaterThan(50_000);
+    const result = await preview(session, {
+      files: [{
+        path: 'chunked.md',
+        content: `---\ntitle: 导入更新目标\nslug: runtime-import-chunked\n---\n${markdown}`,
+      }],
+    });
+    const chunks = [];
+    for (let offset = 0, index = 0; offset < markdown.length; offset += 10_000, index += 1) {
+      const response = await authorRequest(session, '/api/manage/import/render-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ source: markdown.slice(offset, offset + 10_000), prefix: `test-${index}-` }),
+      });
+      expect(response.status).toBe(200);
+      chunks.push((await jsonBody<{ chunk: unknown }>(response)).chunk);
+    }
+    const commitResponse = await authorRequest(session, '/api/manage/import/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        batchId: crypto.randomUUID(), repositoryId: lifeRepositoryId, categoryId: null,
+        items: [{ ...result.items[0]!, action: 'update', targetPostId: existing.id, preserveFirstPublishedAt: null, renderedChunks: chunks }],
+      }),
+    });
+    expect(commitResponse.status).toBe(201);
+    const updated = (await jsonBody<{ posts: PostDetail[] }>(commitResponse)).posts[0]!;
+    expect(updated.html).toContain('安全渲染内容');
+    expect(await env.BLOG_ARCHIVE.head(`render-artifacts/${existing.id}/${updated.revision}.json`)).not.toBeNull();
+    const publishResponse = await authorRequest(session, `/api/manage/posts/${existing.id}/publish`, { method: 'POST' });
+    expect(publishResponse.status).toBe(200);
+    const publicPost = await workerRequest('/api/public/post?repository=life&slug=runtime-import-chunked');
+    expect(publicPost.status).toBe(200);
+    expect((await publicPost.json<PostDetail>()).html).toContain('安全渲染内容');
+  });
+
+  it('分片导入保留代码语言与源码，但不执行高开销的服务端语法着色', async () => {
+    const session = await login();
+    const response = await authorRequest(session, '/api/manage/import/render-chunk', {
+      method: 'POST',
+      body: JSON.stringify({
+        source: "```python\nprint('kept')\n```",
+        prefix: 'code-',
+      }),
+    });
+    expect(response.status).toBe(200);
+    const { chunk } = await jsonBody<{ chunk: { result: { html: string } } }>(response);
+    expect(chunk.result.html).toContain('class="language-python"');
+    expect(chunk.result.html).toContain('print');
+    expect(chunk.result.html).toContain('kept');
+    expect(chunk.result.html).not.toContain('class="hljs');
   });
 
   it('本站导出签名可验证，原发布时间展示最终 UTC，附件大小写冲突不会被猜测', async () => {

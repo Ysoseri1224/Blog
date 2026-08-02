@@ -28,6 +28,8 @@ export interface MarkdownResult {
 
 interface MarkdownOptions {
   wikiTargets?: ReadonlyMap<string, { url: string; title: string; html?: string } | null>;
+  headingPrefix?: string;
+  syntaxHighlight?: boolean;
 }
 
 function escapeHtml(value: string): string {
@@ -172,9 +174,20 @@ function restrictRawMediaUrls() {
   };
 }
 
+function prefixHeadingIds(prefix: string) {
+  return (tree: Root): void => {
+    if (!prefix) return;
+    visit(tree, 'element', (node: Element) => {
+      if (/^h[1-6]$/.test(node.tagName) && typeof node.properties.id === 'string') {
+        node.properties.id = `${prefix}${node.properties.id}`;
+      }
+    });
+  };
+}
+
 export async function renderMarkdown(markdown: string, options: MarkdownOptions = {}): Promise<MarkdownResult> {
   const normalized = preprocess(markdown, options);
-  const file = await unified()
+  const processor = unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
@@ -186,8 +199,10 @@ export async function renderMarkdown(markdown: string, options: MarkdownOptions 
     .use(restrictRawMediaUrls)
     .use(rehypeSanitize, schema)
     .use(rehypeSlug)
-    .use(rehypeKatex)
-    .use(rehypeHighlight, { detect: false })
+    .use(prefixHeadingIds, options.headingPrefix ?? '')
+    .use(rehypeKatex);
+  if (options.syntaxHighlight !== false) processor.use(rehypeHighlight, { detect: false });
+  const file = await processor
     .use(rehypeStringify)
     .process(normalized);
   const text = stripMarkdown(markdown);
@@ -195,7 +210,10 @@ export async function renderMarkdown(markdown: string, options: MarkdownOptions 
   const cjkCount = (text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).length;
   const latinCount = (text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu, ' ').match(/[\p{Letter}\p{Number}]+(?:['’-][\p{Letter}\p{Number}]+)*/gu) ?? []).length;
   const wordCount = cjkCount + latinCount;
-  const headings = extractHeadings(markdown);
+  const headings = extractHeadings(markdown).map((heading) => ({
+    ...heading,
+    id: `${options.headingPrefix ?? ''}${heading.id}`,
+  }));
   return {
     html: String(file), text, description: text.slice(0, 180), headings,
     links: extractLinks(markdown), wordCount, characterCount, readingMinutes: Math.max(1, Math.ceil(wordCount / 260)),

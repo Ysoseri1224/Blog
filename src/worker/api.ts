@@ -8,6 +8,7 @@ import { commitImport, exportPostMarkdown, previewImport } from './importer';
 import { createCategory, createRepository, deleteCategory, deletePostPermanently, deleteRepository, updateCategory, updateRepository } from './management';
 import { listMedia, serveMedia, serveOg, uploadMedia } from './media';
 import { renderMarkdown } from './markdown';
+import { renderSignedChunk } from './renderArtifacts';
 import { resolveWikiTargets } from './linking';
 import { createManualVersion, createPost, getVersion, listVersions, publishPost, restoreVersion, savePost, schedulePost, withdrawPost } from './publishing';
 import { searchPosts } from './search';
@@ -25,6 +26,20 @@ const importPreviewSchema = z.object({
   files: z.array(z.object({ path: z.string().min(1).max(500), content: z.string().max(2_000_000) })).max(100),
   attachments: z.array(z.object({ path: z.string().min(1).max(500), assetId: z.string().uuid().optional() })).max(500),
 });
+const renderChunkInputSchema = z.object({
+  source: z.string().min(1).max(40_000),
+  prefix: z.string().regex(/^[a-z0-9-]{1,64}$/),
+});
+const markdownResultSchema = z.object({
+  html: z.string().max(1_000_000), text: z.string().max(100_000), description: z.string().max(500),
+  headings: z.array(z.object({ depth: z.number().int().min(1).max(6), text: z.string().max(500), id: z.string().max(600) })).max(2_000),
+  links: z.array(z.string().max(4_000)).max(2_000), wordCount: z.number().int().nonnegative(),
+  characterCount: z.number().int().nonnegative(), readingMinutes: z.number().int().positive(),
+});
+const signedRenderChunkSchema = z.object({
+  source: z.string().min(1).max(40_000), prefix: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  result: markdownResultSchema, signature: z.string().min(20).max(256),
+});
 const importItemSchema = z.object({
   key: z.string().uuid(), path: z.string().min(1).max(500), directory: z.string().max(500), title: z.string().min(1).max(240),
   slug: slugSchema, language: z.string().min(2).max(35), summary: z.string().max(2000).nullable(), tags: z.array(z.string().min(1).max(80)).max(80),
@@ -36,7 +51,7 @@ const importItemSchema = z.object({
   publishedTimeCandidate: z.object({
     field: z.enum(['date','published']), raw: z.string(), parsedAt: z.string().datetime().nullable(),
     timezone: z.string().nullable(), issue: z.string().nullable(),
-  }).nullable(), slugConflict: z.boolean(),
+  }).nullable(), slugConflict: z.boolean(), renderedChunks: z.array(signedRenderChunkSchema).max(250).optional(),
 });
 const importCommitSchema = z.object({
   batchId: z.string().uuid(), repositoryId: z.string().uuid(), categoryId: z.string().uuid().nullable().optional(),
@@ -152,6 +167,12 @@ async function manageApi(request: Request, env: Env, ctx: ExecutionContext, path
   if (path === '/api/manage/import/preview') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     return json(await previewImport(env, await parseJson(request, importPreviewSchema)));
+  }
+  if (path === '/api/manage/import/render-chunk') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const input = await parseJson(request, renderChunkInputSchema);
+    const wikiTargets = await resolveWikiTargets(env, input.source, false);
+    return json({ chunk: await renderSignedChunk(env, input.source, input.prefix, wikiTargets) });
   }
   if (path === '/api/manage/import/commit') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);

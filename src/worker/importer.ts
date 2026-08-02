@@ -5,6 +5,12 @@ import { sha256Hex, toBase64Url } from './crypto';
 import { HttpError } from './http';
 import { extractLinks, extractWikiTargets, renderMarkdown } from './markdown';
 import { resolveLinkTargets, resolveWikiTargets } from './linking';
+import {
+  combineSignedChunks,
+  makeRenderArtifact,
+  type RenderArtifactPlan,
+  type SignedRenderChunk,
+} from './renderArtifacts';
 import { processOutbox, type SearchDocument } from './search';
 
 export interface ImportFile { path: string; content: string }
@@ -60,6 +66,7 @@ interface CommitItem extends ImportItem {
   action: 'new' | 'update' | 'skip';
   targetPostId?: string;
   preserveFirstPublishedAt?: string | null;
+  renderedChunks?: SignedRenderChunk[];
 }
 
 interface CurrentImportPost {
@@ -507,6 +514,8 @@ export async function commitImport(
     }
     const now = new Date().toISOString();
     const operationId = crypto.randomUUID();
+    const renderedHtml = new Map<string, string>();
+    const renderArtifacts: RenderArtifactPlan[] = [];
     const statements: D1PreparedStatement[] = [];
     const postStatements: D1PreparedStatement[] = [];
     const contentStatements: D1PreparedStatement[] = [];
@@ -525,7 +534,10 @@ export async function commitImport(
           wikiTargets.set(target, { title: imported[0].item.title, url: `/${repository.url_key}/${imported[0].item.slug}` });
         }
       }
-      const rendered = await renderMarkdown(markdown, { wikiTargets });
+      const chunked = await combineSignedChunks(env, markdown, item.renderedChunks ?? []);
+      const rendered = chunked ?? await renderMarkdown(markdown, { wikiTargets });
+      renderedHtml.set(id, rendered.html);
+      if (chunked) renderArtifacts.push(makeRenderArtifact(id, revision, rendered));
       const linkUrls = extractLinks(markdown);
       for (const target of wikiTargets.values()) if (target) linkUrls.push(target.url);
       const linked = await resolveLinkTargets(env, linkUrls);
@@ -619,6 +631,12 @@ export async function commitImport(
     statements.push(env.CONTENT_DB.prepare('DELETE FROM operation_assertions WHERE id=?1').bind(operationId));
     const writtenKeys: string[] = [];
     try {
+      for (const artifact of renderArtifacts) {
+        await env.BLOG_ARCHIVE.put(artifact.key, artifact.payload, {
+          httpMetadata: { contentType: 'application/json; charset=utf-8' },
+        });
+        writtenKeys.push(artifact.key);
+      }
       for (const version of versions) {
         await env.BLOG_ARCHIVE.put(version.objectKey, version.payload, {
           httpMetadata: { contentType: 'application/json; charset=utf-8' },
@@ -632,7 +650,9 @@ export async function commitImport(
       throw error;
     }
     ctx.waitUntil(processOutbox(env));
-    const posts = await Promise.all(prepared.map((item) => getManagePost(env, item.id)));
+    const posts = await Promise.all(prepared.map((item) => getManagePost(env, item.id, {
+      renderedHtml: renderedHtml.get(item.id) ?? null,
+    })));
     return { posts: posts.filter((post): post is PostDetail => Boolean(post)) };
   } catch (error) {
     await discardImportBatchMedia(env, input.batchId);

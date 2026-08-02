@@ -6,6 +6,7 @@ import { sha256Hex } from './crypto';
 import { HttpError } from './http';
 import { extractLinks, renderMarkdown, stripMarkdown } from './markdown';
 import { resolveLinkTargets, resolveWikiTargets } from './linking';
+import { loadRenderArtifact, renderArtifactThreshold } from './renderArtifacts';
 import { processOutbox, removePublicIndexNow, type SearchDocument } from './search';
 
 type SaveInput = z.infer<typeof postSaveSchema>;
@@ -25,6 +26,15 @@ interface PublicPointerRow {
   id: string;
   canonical_url: string;
   object_key: string;
+}
+
+async function loadPublishedHtml(env: Env, snapshotId: string): Promise<string | null> {
+  const snapshot = await env.CONTENT_DB.prepare('SELECT object_key FROM public_snapshots WHERE id=?1')
+    .bind(snapshotId).first<{ object_key: string }>();
+  if (!snapshot) return null;
+  const object = await env.BLOG_ARCHIVE.get(snapshot.object_key);
+  if (!object) return null;
+  return (await object.json<{ html?: string }>()).html ?? null;
 }
 
 async function loadPostRow(env: Env, postId: string): Promise<CurrentPostRow> {
@@ -200,7 +210,7 @@ export async function savePost(
   if (current.public_snapshot_id && (current.slug !== input.slug || current.repository_id !== input.repositoryId)) {
     // 旧公开地址继续由当前快照服务；只在真正发布新快照时建立重定向。
   }
-  const post = await getManagePost(env, postId);
+  const post = await getManagePost(env, postId, { renderedHtml: rendered.html });
   if (!post) throw new Error('saved post missing');
   return post;
 }
@@ -261,7 +271,7 @@ export function makeOgSvg(title: string, repository: string): string {
 export async function publishPost(env: Env, ctx: ExecutionContext, postId: string, kind: 'publish' | 'scheduled_publish' = 'publish'): Promise<PostDetail> {
   const post = await loadPostRow(env, postId);
   if (post.public_snapshot_id && post.public_revision === post.revision && post.status === 'published' && post.scheduled_task_id === null) {
-    const unchanged = await getManagePost(env, postId);
+    const unchanged = await getManagePost(env, postId, { renderedHtml: await loadPublishedHtml(env, post.public_snapshot_id) });
     if (!unchanged) throw new Error('published post missing');
     return unchanged;
   }
@@ -279,7 +289,10 @@ export async function publishPost(env: Env, ctx: ExecutionContext, postId: strin
   const tags = tagsResult.results.map((row) => row.name);
   const media = await validateMedia(env, post.markdown, post.cover_asset_id);
   const wikiTargets = await resolveWikiTargets(env, post.markdown, true);
-  const rendered = await renderMarkdown(post.markdown, { wikiTargets });
+  const artifact = post.markdown.length > renderArtifactThreshold
+    ? await loadRenderArtifact(env, postId, post.revision)
+    : null;
+  const rendered = artifact ?? await renderMarkdown(post.markdown, { wikiTargets });
   const linkUrls = [...rendered.links];
   for (const resolved of wikiTargets.values()) if (resolved) linkUrls.push(resolved.url);
   const linkedPosts = await resolveLinkTargets(env, linkUrls, true);
@@ -408,7 +421,7 @@ export async function publishPost(env: Env, ctx: ExecutionContext, postId: strin
     throw error;
   }
   ctx.waitUntil(processOutbox(env));
-  const result = await getManagePost(env, postId);
+  const result = await getManagePost(env, postId, { renderedHtml: rendered.html });
   if (!result) throw new Error('published post missing');
   return result;
 }

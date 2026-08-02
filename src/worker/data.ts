@@ -1,6 +1,7 @@
 import type { Category, PostDetail, PostStatus, PostSummary, RecentPublicPost, Repository, RepositoryWorkspace, Visibility } from '../shared/types';
 import { renderMarkdown } from './markdown';
 import { resolveWikiTargets } from './linking';
+import { loadRenderArtifact, renderArtifactThreshold } from './renderArtifacts';
 
 interface RepositoryRow {
   id: string; name: string; url_key: string; visibility: Visibility; created_at: string; updated_at: string;
@@ -190,7 +191,11 @@ async function backlinks(env: Env, postId: string, author: boolean): Promise<Pos
   return result.results.map((row) => ({ postId: row.post_id, title: row.title, url: `/${row.url_key}/${row.slug}`, repositoryName: row.repository_name }));
 }
 
-export async function getManagePost(env: Env, postId: string): Promise<PostDetail | null> {
+export async function getManagePost(
+  env: Env,
+  postId: string,
+  options: { renderedHtml?: string | null } = {},
+): Promise<PostDetail | null> {
   const row = await env.CONTENT_DB.prepare(
     `SELECT id, repository_id, category_id, title, slug, summary, language, status, featured, markdown,
             cover_asset_id, custom_properties_json, created_at, updated_at, first_published_at, last_published_at,
@@ -198,17 +203,24 @@ export async function getManagePost(env: Env, postId: string): Promise<PostDetai
             revision, public_revision FROM posts WHERE id = ?1 AND deleted_at IS NULL`,
   ).bind(postId).first<PostRow>();
   if (!row) return null;
+  const shouldRender = !Object.hasOwn(options, 'renderedHtml');
+  const artifact = shouldRender && (row.markdown?.length ?? 0) > renderArtifactThreshold
+    ? await loadRenderArtifact(env, postId, row.revision)
+    : null;
+  const needsRender = shouldRender && !artifact;
   const [tags, linked, back, wikiTargets] = await Promise.all([
     tagsByPost(env, [postId]),
     env.CONTENT_DB.prepare(
       `SELECT p.id AS post_id, p.title, r.url_key, p.slug FROM post_links l JOIN posts p ON p.id = l.target_post_id
        JOIN repositories r ON r.id = p.repository_id WHERE l.source_post_id = ?1`,
     ).bind(postId).all<{ post_id: string; title: string; url_key: string; slug: string }>(),
-    backlinks(env, postId, true), resolveWikiTargets(env, row.markdown ?? '', false),
+    backlinks(env, postId, true), needsRender ? resolveWikiTargets(env, row.markdown ?? '', false) : Promise.resolve(new Map()),
   ]);
-  const rendered = await renderMarkdown(row.markdown ?? '', { wikiTargets });
+  const html = shouldRender
+    ? artifact?.html ?? (await renderMarkdown(row.markdown ?? '', { wikiTargets })).html
+    : options.renderedHtml ?? null;
   return {
-    ...mapPost(row, tags.get(postId) ?? []), markdown: row.markdown ?? '', html: rendered.html,
+    ...mapPost(row, tags.get(postId) ?? []), markdown: row.markdown ?? '', html,
     coverAssetId: row.cover_asset_id ?? null, customProperties: parseJson<Record<string, unknown>>(row.custom_properties_json, {}),
     forwardLinks: linked.results.map((link) => ({ postId: link.post_id, title: link.title, url: `/${link.url_key}/${link.slug}` })), backlinks: back,
   };

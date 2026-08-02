@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { parsePublicPostResponse } from '../src/client/public/publicPostContract';
 import type { PostDetail } from '../src/shared/types';
+import { getManagePost } from '../src/worker/data';
 import { authorRequest, jsonBody, login, workerRequest } from './helpers';
 
 const lifeRepositoryId = '11111111-1111-4111-8111-111111111111';
@@ -54,6 +55,7 @@ describe('工作稿、快照与历史', () => {
     expect(unpublished.status).toBe(404);
     const publish = await authorRequest(session, `/api/manage/posts/${post.id}/publish`, { method: 'POST' });
     expect(publish.status).toBe(200);
+    expect((await jsonBody<{ post: PostDetail }>(publish)).post.html).toContain('第一版');
     const firstPublic = await workerRequest(`/api/public/post?repository=life&slug=${slug}`);
     expect(firstPublic.status).toBe(200);
     const publicPayload = await firstPublic.json<unknown>();
@@ -68,6 +70,13 @@ describe('工作稿、快照与历史', () => {
     const stillFirst = await workerRequest(`/api/public/post?repository=life&slug=${slug}`);
     expect((await stillFirst.json<PostDetail>()).html).toContain('第一版');
     expect((await env.CONTENT_DB.prepare('SELECT count(*) AS count FROM public_snapshots WHERE post_id=?1').bind(post.id).first<{ count: number }>())?.count).toBe(1);
+  });
+
+  it('发布响应可复用已生成 HTML，不重复渲染工作稿', async () => {
+    const { post } = await createPost();
+    const cachedHtml = '<p>已在发布阶段完成的渲染结果</p>';
+    const detail = await getManagePost(env, post.id, { renderedHtml: cachedHtml });
+    expect(detail?.html).toBe(cachedHtml);
   });
 
   it('创建永久历史、恢复为新工作稿，并要求 step-up 才能撤回', async () => {
