@@ -1067,7 +1067,7 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
     >
       <nav className="manage-rail">
         <a className="brand-mark" href="/" aria-label="返回博客" title="返回博客" onClick={(event) => { event.preventDefault(); void leaveManagement('/'); }}>
-          y
+          <span className="brand-glyph" aria-hidden="true" />
         </a>
         <button
           className="icon-button"
