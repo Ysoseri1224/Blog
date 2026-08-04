@@ -113,8 +113,13 @@ async function managePage(request: Request, env: Env): Promise<Response> {
   });
 }
 
-function isStaticAsset(pathname: string): boolean {
-  return pathname.startsWith('/assets/') || pathname.startsWith('/fonts/') || pathname.startsWith('/capabilities/') || pathname === '/favicon.svg' || pathname === '/manifest.webmanifest';
+export function isStaticAsset(pathname: string): boolean {
+  return pathname.startsWith('/assets/')
+    || pathname.startsWith('/fonts/')
+    || pathname.startsWith('/capabilities/')
+    || pathname === '/favicon.svg'
+    || pathname === '/manifest.webmanifest'
+    || pathname === '/yso-wordmark-mask.png';
 }
 
 export default {
