@@ -10,8 +10,9 @@ import { listMedia, serveMedia, serveOg, uploadMedia } from './media';
 import { renderMarkdown } from './markdown';
 import { renderSignedChunk } from './renderArtifacts';
 import { resolveWikiTargets } from './linking';
-import { createManualVersion, createPost, getVersion, listVersions, publishPost, restoreVersion, savePost, schedulePost, withdrawPost } from './publishing';
+import { createManualVersion, createPost, getVersion, listVersions, preparePostRender, publishPost, restoreVersion, savePost, schedulePost, withdrawPost } from './publishing';
 import { searchPosts } from './search';
+import { renderArtifactThreshold } from './renderArtifacts';
 
 const reauthSchema = z.object({ password: z.string().min(1).max(512) });
 const passwordChangeSchema = z.object({ currentPassword: z.string().min(1).max(512), newPassword: z.string().min(10).max(512) });
@@ -39,6 +40,10 @@ const markdownResultSchema = z.object({
 const signedRenderChunkSchema = z.object({
   source: z.string().min(1).max(40_000), prefix: z.string().regex(/^[a-z0-9-]{1,64}$/),
   result: markdownResultSchema, signature: z.string().min(20).max(256),
+});
+const postRenderSchema = z.object({
+  baseRevision: z.number().int().nonnegative(),
+  chunks: z.array(signedRenderChunkSchema).min(1).max(250),
 });
 const importItemSchema = z.object({
   key: z.string().uuid(), path: z.string().min(1).max(500), directory: z.string().max(500), title: z.string().min(1).max(240),
@@ -162,13 +167,16 @@ async function manageApi(request: Request, env: Env, ctx: ExecutionContext, path
   if (path === '/api/manage/preview') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const input = await parseJson(request, previewSchema);
+    if (input.markdown.length > renderArtifactThreshold) {
+      throw new HttpError(413, '长文预览需要分片渲染', 'render_chunks_required');
+    }
     return json(await renderMarkdown(input.markdown, { wikiTargets: await resolveWikiTargets(env, input.markdown, false) }));
   }
   if (path === '/api/manage/import/preview') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     return json(await previewImport(env, await parseJson(request, importPreviewSchema)));
   }
-  if (path === '/api/manage/import/render-chunk') {
+  if (path === '/api/manage/import/render-chunk' || path === '/api/manage/render-chunk') {
     if (request.method !== 'POST') return methodNotAllowed(['POST']);
     const input = await parseJson(request, renderChunkInputSchema);
     const wikiTargets = await resolveWikiTargets(env, input.source, false);
@@ -226,6 +234,12 @@ async function manageApi(request: Request, env: Env, ctx: ExecutionContext, path
       return json({ deleted: true });
     }
     return methodNotAllowed(['GET', 'PUT', 'DELETE']);
+  }
+  const postRenderMatch = path.match(/^\/api\/manage\/posts\/([0-9a-f-]{36})\/render$/i);
+  if (postRenderMatch?.[1]) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST']);
+    const input = await parseJson(request, postRenderSchema);
+    return json(await preparePostRender(env, postRenderMatch[1], input.baseRevision, input.chunks));
   }
   const actionMatch = path.match(/^\/api\/manage\/posts\/([0-9a-f-]{36})\/(publish|schedule|withdraw|versions|restore|export)$/i);
   if (actionMatch?.[1] && actionMatch[2]) {

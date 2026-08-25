@@ -4,9 +4,9 @@ import type { postSaveSchema, scheduleSchema } from '../shared/schemas';
 import { getManagePost } from './data';
 import { sha256Hex } from './crypto';
 import { HttpError } from './http';
-import { extractLinks, renderMarkdown, stripMarkdown } from './markdown';
+import { extractLinks, markdownMetrics, renderMarkdown, stripMarkdown } from './markdown';
 import { resolveLinkTargets, resolveWikiTargets } from './linking';
-import { loadRenderArtifact, renderArtifactThreshold } from './renderArtifacts';
+import { combineSignedChunks, loadRenderArtifact, makeRenderArtifact, renderArtifactThreshold, type SignedRenderChunk } from './renderArtifacts';
 import { processOutbox, removePublicIndexNow, type SearchDocument } from './search';
 
 type SaveInput = z.infer<typeof postSaveSchema>;
@@ -139,7 +139,7 @@ export async function savePost(
   ).bind(input.repositoryId, input.slug, postId).first<{ id: string }>();
   if (duplicate) throw new HttpError(409, '这个仓库中已存在相同 slug', 'slug_conflict');
   const wikiTargets = await resolveWikiTargets(env, input.markdown, false);
-  const rendered = await renderMarkdown(input.markdown, { wikiTargets });
+  const metrics = markdownMetrics(input.markdown);
   const media = await validateMedia(env, input.markdown, input.coverAssetId);
   const revision = input.baseRevision + 1;
   const writeId = crypto.randomUUID();
@@ -148,7 +148,7 @@ export async function savePost(
   const explicitLinks = extractLinks(input.markdown);
   for (const resolved of wikiTargets.values()) if (resolved) explicitLinks.push(resolved.url);
   const links = await resolveLinkTargets(env, explicitLinks);
-  const authorDocument = searchDocument(postId, input, revision, rendered.text);
+  const authorDocument = searchDocument(postId, input, revision, metrics.text);
   authorDocument.taxonomy = await searchTaxonomy(env, input.categoryId, tagNames);
   const statements: D1PreparedStatement[] = [
     env.CONTENT_DB.prepare(
@@ -157,8 +157,8 @@ export async function savePost(
               reading_minutes=?13, revision=?14, updated_at=?15, last_write_id=?16
         WHERE id=?17 AND revision=?18 AND deleted_at IS NULL`,
     ).bind(input.repositoryId, input.categoryId, input.title || '未命名', input.slug, input.language, input.summary,
-      input.markdown, input.featured ? 1 : 0, input.coverAssetId, JSON.stringify(input.customProperties), rendered.wordCount,
-      rendered.characterCount, rendered.readingMinutes, revision, now, writeId, postId, input.baseRevision),
+      input.markdown, input.featured ? 1 : 0, input.coverAssetId, JSON.stringify(input.customProperties), metrics.wordCount,
+      metrics.characterCount, metrics.readingMinutes, revision, now, writeId, postId, input.baseRevision),
     env.CONTENT_DB.prepare('DELETE FROM post_tags WHERE post_id = ?1 AND EXISTS (SELECT 1 FROM posts WHERE id=?1 AND revision=?2 AND last_write_id=?3)')
       .bind(postId, revision, writeId),
   ];
@@ -210,9 +210,37 @@ export async function savePost(
   if (current.public_snapshot_id && (current.slug !== input.slug || current.repository_id !== input.repositoryId)) {
     // 旧公开地址继续由当前快照服务；只在真正发布新快照时建立重定向。
   }
-  const post = await getManagePost(env, postId, { renderedHtml: rendered.html });
+  const post = await getManagePost(env, postId, { renderedHtml: null });
   if (!post) throw new Error('saved post missing');
   return post;
+}
+
+export async function preparePostRender(
+  env: Env,
+  postId: string,
+  baseRevision: number,
+  chunks: SignedRenderChunk[],
+): Promise<{ html: string }> {
+  const post = await loadPostRow(env, postId);
+  if (post.revision !== baseRevision) throw new HttpError(409, '工作稿已变化，请重新生成预览', 'revision_conflict');
+  if (post.markdown.length <= renderArtifactThreshold) {
+    const wikiTargets = await resolveWikiTargets(env, post.markdown, false);
+    return { html: (await renderMarkdown(post.markdown, { wikiTargets })).html };
+  }
+  const rendered = await combineSignedChunks(env, post.markdown, chunks);
+  if (!rendered) throw new HttpError(400, '长文缺少分片渲染结果', 'render_chunks_required');
+  const artifact = makeRenderArtifact(postId, post.revision, rendered);
+  await env.BLOG_ARCHIVE.put(artifact.key, artifact.payload, {
+    httpMetadata: { contentType: 'application/json; charset=utf-8' },
+    customMetadata: { postId, revision: String(post.revision) },
+  });
+  const current = await env.CONTENT_DB.prepare('SELECT revision FROM posts WHERE id=?1 AND deleted_at IS NULL')
+    .bind(postId).first<{ revision: number }>();
+  if (current?.revision !== post.revision) {
+    await env.BLOG_ARCHIVE.delete(artifact.key);
+    throw new HttpError(409, '工作稿已变化，请重新生成预览', 'revision_conflict');
+  }
+  return { html: rendered.html };
 }
 
 async function archiveVersion(env: Env, postId: string, revision: number, markdown: string, kind: VersionKind, permanent: boolean, metadata: Record<string, unknown> = {}): Promise<string> {
@@ -292,6 +320,9 @@ export async function publishPost(env: Env, ctx: ExecutionContext, postId: strin
   const artifact = post.markdown.length > renderArtifactThreshold
     ? await loadRenderArtifact(env, postId, post.revision)
     : null;
+  if (post.markdown.length > renderArtifactThreshold && !artifact) {
+    throw new HttpError(409, '长文需要先完成分片渲染，请从管理页重新发布', 'render_artifact_required');
+  }
   const rendered = artifact ?? await renderMarkdown(post.markdown, { wikiTargets });
   const linkUrls = [...rendered.links];
   for (const resolved of wikiTargets.values()) if (resolved) linkUrls.push(resolved.url);
@@ -440,17 +471,40 @@ export async function schedulePost(env: Env, postId: string, input: ScheduleInpu
   const expectedLocal = input.localDateTime.replace('T', ' ').slice(0, 19);
   if (formatter.format(utc).replace(',', '') !== expectedLocal) throw new HttpError(400, '当地时间、时区与 UTC 时刻不一致', 'schedule_timezone_mismatch');
   const scheduledTaskId = crypto.randomUUID();
+  const nextRevision = input.baseRevision + 1;
+  const preparedRender = post.markdown.length > renderArtifactThreshold
+    ? await loadRenderArtifact(env, postId, post.revision)
+    : null;
+  if (post.markdown.length > renderArtifactThreshold && !preparedRender) {
+    throw new HttpError(409, '长文需要先完成分片渲染，请重新设定发布时间', 'render_artifact_required');
+  }
   await env.CONTENT_DB.prepare(
     `UPDATE posts SET status='scheduled', scheduled_local=?1, scheduled_timezone=?2, scheduled_utc=?3,
       scheduled_task_id=?4, last_schedule_result=NULL,revision=?5,updated_at=?6
       WHERE id=?7 AND revision=?8 AND scheduled_task_id IS ?9`,
-  ).bind(input.localDateTime, input.timezone, utc.toISOString(), scheduledTaskId, input.baseRevision + 1,
+  ).bind(input.localDateTime, input.timezone, utc.toISOString(), scheduledTaskId, nextRevision,
     new Date().toISOString(), postId, input.baseRevision,
     post.scheduled_task_id).run();
   const scheduled = await env.CONTENT_DB.prepare('SELECT revision,scheduled_task_id FROM posts WHERE id=?1 AND deleted_at IS NULL')
     .bind(postId).first<{ revision: number; scheduled_task_id: string | null }>();
-  if (scheduled?.revision !== input.baseRevision + 1 || scheduled.scheduled_task_id !== scheduledTaskId) {
+  if (scheduled?.revision !== nextRevision || scheduled.scheduled_task_id !== scheduledTaskId) {
     throw new HttpError(409, '工作稿或发布计划已变化，请重新确认计划时间', 'revision_conflict');
+  }
+  if (preparedRender) {
+    const artifact = makeRenderArtifact(postId, nextRevision, preparedRender);
+    try {
+      await env.BLOG_ARCHIVE.put(artifact.key, artifact.payload, {
+        httpMetadata: { contentType: 'application/json; charset=utf-8' },
+        customMetadata: { postId, revision: String(nextRevision) },
+      });
+    } catch (error) {
+      await env.CONTENT_DB.prepare(
+        `UPDATE posts SET status='draft',scheduled_local=NULL,scheduled_timezone=NULL,scheduled_utc=NULL,
+          scheduled_task_id=NULL,last_schedule_result='failed:render artifact copy',revision=?1,updated_at=?2
+          WHERE id=?3 AND revision=?4 AND scheduled_task_id=?5`,
+      ).bind(input.baseRevision, new Date().toISOString(), postId, nextRevision, scheduledTaskId).run();
+      throw error;
+    }
   }
   const result = await getManagePost(env, postId);
   if (!result) throw new Error('scheduled post missing');

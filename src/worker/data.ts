@@ -194,7 +194,7 @@ async function backlinks(env: Env, postId: string, author: boolean): Promise<Pos
 export async function getManagePost(
   env: Env,
   postId: string,
-  options: { renderedHtml?: string | null } = {},
+  options: { renderedHtml?: string | null } = { renderedHtml: null },
 ): Promise<PostDetail | null> {
   const row = await env.CONTENT_DB.prepare(
     `SELECT id, repository_id, category_id, title, slug, summary, language, status, featured, markdown,

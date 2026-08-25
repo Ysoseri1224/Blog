@@ -3,11 +3,12 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest';
 import type { PostDetail } from '../src/shared/types';
 import { publishDuePosts } from '../src/worker/publishing';
+import { splitMarkdownForRender } from '../src/client/manage/renderChunks';
 import { authorRequest, jsonBody, login, workerRequest } from './helpers';
 
 const lifeRepositoryId = '11111111-1111-4111-8111-111111111111';
 
-async function preparedPost(): Promise<{ session: Awaited<ReturnType<typeof login>>; post: PostDetail }> {
+async function preparedPost(slug = 'runtime-schedule-test'): Promise<{ session: Awaited<ReturnType<typeof login>>; post: PostDetail }> {
   const session = await login();
   const createdResponse = await authorRequest(session, '/api/manage/posts', {
     method: 'POST', body: JSON.stringify({ repositoryId: lifeRepositoryId, categoryId: null, title: '定时边界', language: 'zh-CN' }),
@@ -16,7 +17,7 @@ async function preparedPost(): Promise<{ session: Awaited<ReturnType<typeof logi
   const created = (await jsonBody<{ post: PostDetail }>(createdResponse)).post;
   const savedResponse = await authorRequest(session, `/api/manage/posts/${created.id}`, {
     method: 'PUT', body: JSON.stringify({
-      baseRevision: created.revision, title: '定时边界', slug: 'runtime-schedule-test', repositoryId: lifeRepositoryId,
+      baseRevision: created.revision, title: '定时边界', slug, repositoryId: lifeRepositoryId,
       categoryId: null, language: 'zh-CN', summary: null, markdown: '# 定时发布\n\n正文。', tags: [],
       featured: false, coverAssetId: null, customProperties: {},
     }),
@@ -78,5 +79,40 @@ describe('定时发布与时区', () => {
     const versionCount = await env.CONTENT_DB.prepare("SELECT count(*) AS count FROM post_versions WHERE post_id=?1 AND kind='scheduled_publish'").bind(post.id).first<{ count: number }>();
     expect(snapshotCount?.count).toBe(1);
     expect(versionCount?.count).toBe(1);
+  });
+
+  it('长文计划发布将渲染产物绑定到计划后的 revision', async () => {
+    const { session, post } = await preparedPost('runtime-long-schedule-base');
+    const markdown = `# 长文定时\n\n${'计划发布内容。'.repeat(3_000)}`;
+    const savedResponse = await authorRequest(session, `/api/manage/posts/${post.id}`, {
+      method: 'PUT', body: JSON.stringify({
+        baseRevision: post.revision, title: '长文定时', slug: 'runtime-long-schedule-test', repositoryId: lifeRepositoryId,
+        categoryId: null, language: 'zh-CN', summary: null, markdown, tags: [],
+        featured: false, coverAssetId: null, customProperties: {},
+      }),
+    });
+    const saved = (await jsonBody<{ post: PostDetail }>(savedResponse)).post;
+    const chunks = [];
+    for (const [index, source] of splitMarkdownForRender(markdown).entries()) {
+      const response = await authorRequest(session, '/api/manage/render-chunk', {
+        method: 'POST', body: JSON.stringify({ source, prefix: `schedule-${index}-` }),
+      });
+      chunks.push((await jsonBody<{ chunk: unknown }>(response)).chunk);
+    }
+    expect((await authorRequest(session, `/api/manage/posts/${post.id}/render`, {
+      method: 'POST', body: JSON.stringify({ baseRevision: saved.revision, chunks }),
+    })).status).toBe(200);
+    const scheduledResponse = await authorRequest(session, `/api/manage/posts/${post.id}/schedule`, {
+      method: 'POST', body: JSON.stringify({
+        baseRevision: saved.revision,
+        localDateTime: '2030-07-01T10:00:00',
+        timezone: 'Pacific/Auckland',
+        utcDateTime: '2030-06-30T22:00:00Z',
+      }),
+    });
+    expect(scheduledResponse.status).toBe(200);
+    const scheduled = (await jsonBody<{ post: PostDetail }>(scheduledResponse)).post;
+    expect(scheduled.revision).toBe(saved.revision + 1);
+    expect(await env.BLOG_ARCHIVE.head(`render-artifacts/${post.id}/${scheduled.revision}.json`)).not.toBeNull();
   });
 });

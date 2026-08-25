@@ -8,6 +8,7 @@ import { resolveLinkTargets, resolveWikiTargets } from './linking';
 import {
   combineSignedChunks,
   makeRenderArtifact,
+  renderArtifactThreshold,
   type RenderArtifactPlan,
   type SignedRenderChunk,
 } from './renderArtifacts';
@@ -527,6 +528,9 @@ export async function commitImport(
     const versions: VersionPlan[] = [];
     for (const preparedItem of prepared) {
       const { item, current, id, revision, categoryId, markdown, firstPublishedAt } = preparedItem;
+      if (markdown.length > renderArtifactThreshold && !item.renderedChunks?.length) {
+        throw new HttpError(400, '长文导入缺少分片渲染结果', 'render_chunks_required');
+      }
       const wikiTargets = await resolveWikiTargets(env, markdown, false);
       for (const target of extractWikiTargets(markdown)) {
         const imported = importedTitles.get(target);

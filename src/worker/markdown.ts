@@ -205,19 +205,25 @@ export async function renderMarkdown(markdown: string, options: MarkdownOptions 
   const file = await processor
     .use(rehypeStringify)
     .process(normalized);
-  const text = stripMarkdown(markdown);
-  const characterCount = Array.from(text.replace(/\s/g, '')).length;
-  const cjkCount = (text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).length;
-  const latinCount = (text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu, ' ').match(/[\p{Letter}\p{Number}]+(?:['’-][\p{Letter}\p{Number}]+)*/gu) ?? []).length;
-  const wordCount = cjkCount + latinCount;
+  const metrics = markdownMetrics(markdown);
+  const { text, characterCount, wordCount, readingMinutes } = metrics;
   const headings = extractHeadings(markdown).map((heading) => ({
     ...heading,
     id: `${options.headingPrefix ?? ''}${heading.id}`,
   }));
   return {
     html: String(file), text, description: text.slice(0, 180), headings,
-    links: extractLinks(markdown), wordCount, characterCount, readingMinutes: Math.max(1, Math.ceil(wordCount / 260)),
+    links: extractLinks(markdown), wordCount, characterCount, readingMinutes,
   };
+}
+
+export function markdownMetrics(markdown: string): Pick<MarkdownResult, 'text' | 'description' | 'wordCount' | 'characterCount' | 'readingMinutes'> {
+  const text = stripMarkdown(markdown);
+  const characterCount = Array.from(text.replace(/\s/g, '')).length;
+  const cjkCount = (text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).length;
+  const latinCount = (text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu, ' ').match(/[\p{Letter}\p{Number}]+(?:['’-][\p{Letter}\p{Number}]+)*/gu) ?? []).length;
+  const wordCount = cjkCount + latinCount;
+  return { text, description: text.slice(0, 180), wordCount, characterCount, readingMinutes: Math.max(1, Math.ceil(wordCount / 260)) };
 }
 
 export function stripMarkdown(markdown: string): string {

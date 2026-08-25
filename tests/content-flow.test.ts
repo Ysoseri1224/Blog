@@ -79,6 +79,40 @@ describe('工作稿、快照与历史', () => {
     expect(detail?.html).toBe(cachedHtml);
   });
 
+  it('长文读取和自动保存不做整篇渲染，发布前使用分片产物', async () => {
+    const { session, post } = await createPost();
+    const markdown = `# 长文\n\n${'分片保存内容。'.repeat(3_500)}`;
+    expect(markdown.length).toBeGreaterThan(20_000);
+    const savedResponse = await authorRequest(session, `/api/manage/posts/${post.id}`, {
+      method: 'PUT', body: JSON.stringify(draft(post, markdown, 'runtime-long-save')),
+    });
+    expect(savedResponse.status).toBe(200);
+    const saved = (await jsonBody<{ post: PostDetail }>(savedResponse)).post;
+    expect(saved.html).toBeNull();
+    const loaded = await authorRequest(session, `/api/manage/posts/${post.id}`);
+    expect((await jsonBody<{ post: PostDetail }>(loaded)).post.html).toBeNull();
+    const unprepared = await authorRequest(session, `/api/manage/posts/${post.id}/publish`, { method: 'POST' });
+    expect(unprepared.status).toBe(409);
+    expect(await unprepared.json<{ error: string }>()).toMatchObject({ error: 'render_artifact_required' });
+
+    const chunks = [];
+    for (let offset = 0, index = 0; offset < markdown.length; offset += 4_000, index += 1) {
+      const response = await authorRequest(session, '/api/manage/render-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ source: markdown.slice(offset, offset + 4_000), prefix: `save-${index}-` }),
+      });
+      expect(response.status).toBe(200);
+      chunks.push((await jsonBody<{ chunk: unknown }>(response)).chunk);
+    }
+    const prepared = await authorRequest(session, `/api/manage/posts/${post.id}/render`, {
+      method: 'POST', body: JSON.stringify({ baseRevision: saved.revision, chunks }),
+    });
+    expect(prepared.status).toBe(200);
+    const published = await authorRequest(session, `/api/manage/posts/${post.id}/publish`, { method: 'POST' });
+    expect(published.status).toBe(200);
+    expect((await jsonBody<{ post: PostDetail }>(published)).post.html).toContain('分片保存内容');
+  });
+
   it('创建永久历史、恢复为新工作稿，并要求 step-up 才能撤回', async () => {
     const { session, post } = await createPost();
     const slug = 'runtime-history-test';

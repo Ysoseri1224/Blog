@@ -10,10 +10,10 @@ async function start(bootstrap: AppBootstrap): Promise<void> {
   if (bootstrap.kind === 'manage') {
     if (bootstrap.authenticated) {
       const { ManageApp } = await import('./manage/ManageApp');
-      createRoot(root).render(<><CursorLayer/><ManageApp initial={bootstrap} /></>);
+      createRoot(root).render(<ManageApp initial={bootstrap} />);
     } else {
       const { AuthApp } = await import('./manage/AuthApp');
-      createRoot(root).render(<><CursorLayer/><AuthApp initial={bootstrap} /></>);
+      createRoot(root).render(<AuthApp initial={bootstrap} />);
     }
   } else {
     const { PublicApp } = await import('./public/PublicApp');

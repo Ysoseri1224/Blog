@@ -19,6 +19,11 @@ import { t } from "../../shared/i18n";
 import { api, ApiError } from "../api";
 import { Icon } from "../components/Icon";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
+import { mediaMarkdown } from "./markdownBlocks";
+import {
+  renderArtifactThreshold,
+  splitMarkdownForRender,
+} from "./renderChunks";
 import {
   bindingProblem,
   capturedBinding,
@@ -108,6 +113,23 @@ interface ImportItem {
   action: "new" | "update" | "skip";
   targetPostId?: string;
   preserveFirstPublishedAt?: string | null;
+  renderedChunks?: SignedRenderChunk[];
+}
+interface MarkdownRenderResult {
+  html: string;
+  text: string;
+  description: string;
+  headings: Array<{ depth: number; text: string; id: string }>;
+  links: string[];
+  wordCount: number;
+  characterCount: number;
+  readingMinutes: number;
+}
+interface SignedRenderChunk {
+  source: string;
+  prefix: string;
+  result: MarkdownRenderResult;
+  signature: string;
 }
 interface ImportPreview {
   items: Omit<ImportItem, "action">[];
@@ -128,6 +150,29 @@ interface LocalRecovery {
 interface ManageTab {
   postId: string;
   title: string;
+}
+
+async function requestRenderedChunks(
+  markdown: string,
+  csrf: string | null,
+  prefix = "manage",
+): Promise<SignedRenderChunk[]> {
+  const chunks: SignedRenderChunk[] = [];
+  for (const [index, source] of splitMarkdownForRender(markdown).entries()) {
+    const data = await api<{ chunk: SignedRenderChunk }>(
+      "/api/manage/render-chunk",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          source,
+          prefix: `${prefix}-${String(index + 1).padStart(3, "0")}-`,
+        }),
+      },
+      csrf,
+    );
+    chunks.push(data.chunk);
+  }
+  return chunks;
 }
 
 function draftFromPost(post: PostDetail): Draft {
@@ -598,19 +643,53 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
         ),
       );
   };
+  const renderLongMarkdown = useCallback(
+    (markdown: string) => requestRenderedChunks(markdown, csrf),
+    [csrf],
+  );
+  const prepareLongPost = useCallback(
+    async (saved: PostDetail): Promise<void> => {
+      if (saved.markdown.length <= renderArtifactThreshold) return;
+      const chunks = await renderLongMarkdown(saved.markdown);
+      await api(
+        `/api/manage/posts/${saved.id}/render`,
+        {
+          method: "POST",
+          body: JSON.stringify({ baseRevision: saved.revision, chunks }),
+        },
+        csrf,
+      );
+    },
+    [csrf, renderLongMarkdown],
+  );
   const showPreview = async () => {
     if (!draft) return;
-    const data = await api<{ html: string }>(
-      "/api/manage/preview",
-      { method: "POST", body: JSON.stringify({ markdown: draft.markdown }) },
-      csrf,
-    );
-    setPreviewHtml(data.html);
-    setDialog("preview");
+    try {
+      const html =
+        draft.markdown.length > renderArtifactThreshold
+          ? (await renderLongMarkdown(draft.markdown))
+              .map((chunk) => chunk.result.html)
+              .join("\n")
+          : (
+              await api<{ html: string }>(
+                "/api/manage/preview",
+                {
+                  method: "POST",
+                  body: JSON.stringify({ markdown: draft.markdown }),
+                },
+                csrf,
+              )
+            ).html;
+      setPreviewHtml(html);
+      setDialog("preview");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "预览生成失败");
+    }
   };
   const publish = async () => {
     const saved = await saveNow();
     if (!saved) return;
+    await prepareLongPost(saved);
     const data = await api<{ post: PostDetail }>(
       `/api/manage/posts/${saved.id}/publish`,
       { method: "POST" },
@@ -1751,10 +1830,12 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
             onRefresh={() => void loadMedia()}
             onSearch={(query) => void loadMedia(query)}
             onSelect={(asset) => {
-              editorRef.current?.insert(
-                `\n![${asset.filename}](media://${asset.id})\n`,
-              );
               setDialog(null);
+              requestAnimationFrame(() =>
+                editorRef.current?.insertBlock(
+                  mediaMarkdown(asset.filename, asset.id, asset.contentType),
+                ),
+              );
             }}
             onCover={(asset) => {
               updateDraft({ coverAssetId: asset.id });
@@ -1773,6 +1854,7 @@ export function ManageApp({ initial }: { initial: ManageBootstrap }) {
           onSubmit={async (localDateTime, timezone, utcDateTime) => {
             const saved = await saveNow();
             if (!saved) return;
+            await prepareLongPost(saved);
             const data = await api<{ post: PostDetail }>(
               `/api/manage/posts/${saved.id}/schedule`,
               {
@@ -3002,6 +3084,16 @@ function mediaType(path: string): string {
   );
 }
 
+function resolvedImportMarkdown(markdown: string, resolved: Record<string, string>): string {
+  let output = markdown;
+  for (const [reference, assetId] of Object.entries(resolved)) {
+    output = output
+      .replaceAll(`](${reference})`, `](media://${assetId})`)
+      .replaceAll(`![[${reference}]]`, `![](media://${assetId})`);
+  }
+  return output;
+}
+
 function extractZip(file: File): Promise<{
   documents: Array<{ path: string; content: string }>;
   attachments: Array<{ path: string; buffer: ArrayBuffer }>;
@@ -3187,6 +3279,20 @@ function ImportDialog({
           slug: chosen?.slug ?? fresh.slug,
         };
       });
+      for (const [index, item] of finalItems.entries()) {
+        if (item.action === "skip") continue;
+        const markdown = resolvedImportMarkdown(
+          item.markdown,
+          item.resolvedAttachments,
+        );
+        if (markdown.length > renderArtifactThreshold) {
+          item.renderedChunks = await requestRenderedChunks(
+            markdown,
+            csrf,
+            `import-${String(index + 1).padStart(3, "0")}`,
+          );
+        }
+      }
       const data = await api<{ posts: PostDetail[] }>(
         "/api/manage/import/commit",
         {

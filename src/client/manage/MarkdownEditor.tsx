@@ -5,11 +5,13 @@ import { openSearchPanel, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, keymap, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { blockInsertion } from './markdownBlocks';
 
 export interface MarkdownEditorHandle {
   wrapSelection(before: string, after?: string): void;
   prefixLine(prefix: string): void;
   insert(text: string): void;
+  insertBlock(text: string): void;
   indent(more: boolean): void;
   undo(): void;
   redo(): void;
@@ -50,7 +52,13 @@ class ImageWidget extends WidgetType {
     const root = document.createElement(this.block ? 'figure' : 'span'); root.className = this.block ? 'cm-live-image' : 'cm-live-image-inline';
     const source = this.source.match(/^media:\/\/([0-9a-f-]{36})$/i)?.[1];
     const safeSource = source ? `/api/public/media/${source}` : /^(?:https?:\/\/|\/)/i.test(this.source) ? this.source : '';
-    if (safeSource) { const image = document.createElement('img'); image.src = safeSource; image.alt = this.alt; image.loading = 'lazy'; root.appendChild(image); }
+    if (safeSource) {
+      const status = document.createElement('span'); status.className = 'cm-live-image-status'; status.textContent = '正在载入图片…'; root.appendChild(status);
+      const image = document.createElement('img'); image.alt = this.alt; image.loading = 'lazy';
+      image.addEventListener('load', () => status.remove(), { once: true });
+      image.addEventListener('error', () => { image.remove(); status.textContent = '图片无法载入，双击此处可检查链接'; }, { once: true });
+      image.src = safeSource; root.appendChild(image);
+    }
     else { const missing = document.createElement('span'); missing.textContent = this.alt || '无法预览的图片'; root.appendChild(missing); }
     if (this.block && this.alt) { const caption = document.createElement('figcaption'); caption.textContent = this.alt; root.appendChild(caption); }
     root.addEventListener('mousedown', (event) => { event.preventDefault(); focusSource(view, this.from); });
@@ -191,6 +199,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
     wrapSelection(before, after = before) { const view = viewRef.current; if (!view) return; const range = view.state.selection.main; const selected = view.state.sliceDoc(range.from, range.to); const text = !selected && before === '`' ? 'code' : selected; view.dispatch({ changes: { from: range.from, to: range.to, insert: `${before}${text}${after}` }, selection: { anchor: range.from + before.length, head: range.from + before.length + text.length } }); view.focus(); },
     prefixLine(prefix) { const view = viewRef.current; if (view) prefixSelectedLines(view, prefix); },
     insert(text) { const view = viewRef.current; if (!view) return; const range = view.state.selection.main; view.dispatch({ changes: { from: range.from, to: range.to, insert: text }, selection: { anchor: range.from + text.length } }); view.focus(); },
+    insertBlock(text) { const view = viewRef.current; if (!view) return; const range = view.state.selection.main; const change = blockInsertion(view.state.doc.toString(), range.from, range.to, text); view.dispatch({ changes: { from: range.from, to: range.to, insert: change.insert }, selection: { anchor: range.from + change.anchorOffset }, scrollIntoView: true }); view.focus(); },
     indent(more) { const view = viewRef.current; if (view) (more ? indentMore : indentLess)(view); },
     undo() { const view = viewRef.current; if (view) undo(view); },
     redo() { const view = viewRef.current; if (view) redo(view); },
