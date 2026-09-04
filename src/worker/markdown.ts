@@ -99,8 +99,42 @@ function normalizeEmbeds(markdown: string): string {
   });
 }
 
+/**
+ * remark-directive treats `:name` as a text directive. In prose an ASCII colon
+ * is commonly written without a following space (`项目:Scenario`, `Agent:行为`),
+ * which is ordinary text rather than a directive. Escape single colons followed
+ * immediately by a Unicode letter outside fenced and inline code. Real block
+ * directives such as `::embed[...]` continue to work.
+ */
+function escapeAmbiguousTextDirectives(markdown: string): string {
+  let fence: string | null = null;
+  return markdown.split('\n').map((line) => {
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceMatch?.[1]) {
+      if (!fence) fence = fenceMatch[1];
+      else if (fence[0] === fenceMatch[1][0] && fenceMatch[1].length >= fence.length) fence = null;
+      return line;
+    }
+    if (fence) return line;
+    const segments = line.split(/(`+[^`]*`+)/g);
+    return segments.map((segment, index) => {
+      if (index % 2) return segment;
+      let output = '';
+      for (let cursor = 0; cursor < segment.length; cursor += 1) {
+        const character = segment[cursor] ?? '';
+        const previous = segment[cursor - 1] ?? '';
+        const next = segment[cursor + 1] ?? '';
+        if (character === ':' && previous !== ':' && /\p{Letter}/u.test(next)) output += '\\:';
+        else output += character;
+      }
+      return output;
+    }).join('');
+  }).join('\n');
+}
+
 function preprocess(markdown: string, options: MarkdownOptions): string {
-  const mediaResolved = markdown.replace(/media:\/\/([0-9a-f-]{36})/gi, '/api/public/media/$1');
+  const disambiguated = escapeAmbiguousTextDirectives(markdown);
+  const mediaResolved = disambiguated.replace(/media:\/\/([0-9a-f-]{36})/gi, '/api/public/media/$1');
   return normalizeEmbeds(normalizeCallouts(normalizeWikiLinks(mediaResolved, options.wikiTargets ?? new Map()))).replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
 }
 
