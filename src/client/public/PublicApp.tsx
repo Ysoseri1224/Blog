@@ -5,6 +5,7 @@ import { ApiError, api } from '../api';
 import { Icon } from '../components/Icon';
 import { PageCurlCorner } from '../components/PageCurlCorner';
 import { parsePublicPostResponse } from './publicPostContract';
+import { clampSidebarWidth, defaultSidebarWidths, readSidebarWidths, writeSidebarWidths, type SidebarSide, type SidebarWidths } from './sidebarWidths';
 
 type Activity = 'files' | 'search' | 'featured' | 'tags';
 type RightTool = 'outline' | 'properties' | 'backlinks';
@@ -149,6 +150,45 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const [searchResults, setSearchResults] = useState<Array<{ postId: string; snippet: string; score: number }>>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [mobileLeft, setMobileLeft] = useState(false); const [mobileRight, setMobileRight] = useState(false);
+  const [sidebarWidths, setSidebarWidths] = useState<SidebarWidths>(readSidebarWidths);
+  const [resizing, setResizing] = useState<SidebarSide | null>(null);
+  const lastHandleClick = useRef<{ side: SidebarSide; at: number } | null>(null);
+  const setSidebarWidth = (side: SidebarSide, width: number, persist: boolean) => setSidebarWidths((current) => {
+    const next = { ...current, [side]: clampSidebarWidth(side, width, window.innerWidth) };
+    if (persist) writeSidebarWidths(next);
+    return next;
+  });
+  const startResize = (side: SidebarSide) => (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget; handle.setPointerCapture(event.pointerId); setResizing(side);
+    const startX = event.clientX; let moved = false;
+    const widthAt = (clientX: number) => side === 'left' ? clientX : window.innerWidth - clientX;
+    const move = (moveEvent: PointerEvent) => {
+      if (!moved && Math.abs(moveEvent.clientX - startX) < 3) return;
+      moved = true; setSidebarWidth(side, widthAt(moveEvent.clientX), false);
+    };
+    const end = (endEvent: PointerEvent) => {
+      handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', end); handle.removeEventListener('pointercancel', end);
+      setResizing(null);
+      if (moved) { setSidebarWidth(side, widthAt(endEvent.clientX), true); lastHandleClick.current = null; return; }
+      const now = endEvent.timeStamp; const last = lastHandleClick.current;
+      if (last && last.side === side && now - last.at < 400) { setSidebarWidth(side, defaultSidebarWidths[side], true); lastHandleClick.current = null; }
+      else lastHandleClick.current = { side, at: now };
+    };
+    handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', end); handle.addEventListener('pointercancel', end);
+  };
+  const resizeWithKeys = (side: SidebarSide) => (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 48 : 16;
+    const grow = side === 'left' ? 'ArrowRight' : 'ArrowLeft'; const shrink = side === 'left' ? 'ArrowLeft' : 'ArrowRight';
+    if (event.key === grow) setSidebarWidth(side, sidebarWidths[side] + step, true);
+    else if (event.key === shrink) setSidebarWidth(side, sidebarWidths[side] - step, true);
+    else if (event.key === 'Home') setSidebarWidth(side, defaultSidebarWidths[side], true);
+    else return;
+    event.preventDefault();
+  };
+  const shellStyle = { ...(stored.leftCollapsed ? {} : { '--left-w': `${sidebarWidths.left}px` }), ...(stored.rightCollapsed ? {} : { '--right-w': `${sidebarWidths.right}px` }) } as React.CSSProperties;
+  const resizeHandle = (side: SidebarSide) => <div className={`sidebar-resizer ${side}`} role="separator" aria-orientation="vertical" aria-label={t(lang, side === 'left' ? 'resizeLeftSidebar' : 'resizeRightSidebar')} aria-valuenow={sidebarWidths[side]} tabIndex={0} onPointerDown={startResize(side)} onKeyDown={resizeWithKeys(side)}/>;
   const [mobileTabs, setMobileTabs] = useState(false);
   const requestRef = useRef(0); const articleScrollRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLElement>(null); const scrollFrameRef = useRef(0);
@@ -301,7 +341,7 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
   const activityTitle = stored.activity === 'files' ? t(lang, 'files') : stored.activity === 'search' ? t(lang, 'search') : stored.activity === 'featured' ? t(lang, 'featured') : t(lang, 'currentArticleTags');
   const issueMessage = readingIssue ? readingIssueText(readingIssue.kind, lang) : null;
 
-  return <div className="app-shell" data-left-collapsed={stored.leftCollapsed || undefined} data-right-collapsed={stored.rightCollapsed || undefined}>
+  return <div className="app-shell" style={shellStyle} data-resizing={resizing ?? undefined} data-left-collapsed={stored.leftCollapsed || undefined} data-right-collapsed={stored.rightCollapsed || undefined}>
     <header className="top-chrome">
       <div className="top-left"><a className="home-link" href="https://ysoseri.us" aria-label={t(lang, 'backHome')}><Icon name="home"/><span>ysoseri.us</span></a><ToolbarButton label={t(lang, 'leftSidebar')} onClick={() => updateStored({ leftCollapsed: !stored.leftCollapsed })}><Icon name="panel-left"/></ToolbarButton></div>
       <div className="tabs" role="tablist">{stored.tabs.map((tab) => <div className="article-tab" role="tab" aria-selected={tab.postId === stored.activePostId} draggable key={tab.postId} onDragStart={(event)=>event.dataTransfer.setData('text/tab-id',tab.postId)} onDragOver={(event)=>event.preventDefault()} onDrop={(event)=>{event.preventDefault();updateStored({tabs:reorderTabs(stored.tabs,event.dataTransfer.getData('text/tab-id'),tab.postId)});}} onClick={() => { const target = workspace?.posts.find((item) => item.id === tab.postId); if (target) void openPost(target); }}><Icon name="file"/><span>{tab.title}</span><button aria-label={`${t(lang, 'closeTab')}: ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.postId); }}><Icon name="close"/></button></div>)}</div>
@@ -318,11 +358,11 @@ export function PublicApp({ initial }: { initial: PublicBootstrap }) {
         {stored.activity === 'tags' && <div className="tag-overview">{post?.tags.map((tag) => <button key={tag} onClick={() => updateStored({ activity: 'search', query: `tag:${tag}` })}><Icon name="tag"/><span>#{tag}</span></button>)}{!post?.tags.length && <p className="panel-empty">{t(lang, 'noArticleTags')}</p>}</div>}
       </section>
       <div className="repository-switcher"><select value={workspace?.repository.key ?? ''} onChange={(event) => void switchRepository(event.target.value)} aria-label={t(lang, 'switchRepository')}>{repositories.map((repository) => <option value={repository.key} key={repository.id}>{repository.name}</option>)}</select><Icon name="chevron"/></div>
-    </aside>
+    {!stored.leftCollapsed && resizeHandle('left')}</aside>
     <main className="center-pane">
       <div className="reading-scroll" ref={articleScrollRef} onScroll={onScroll} aria-busy={loading}>{loading && !post && <div className="reading-skeleton"><i/><i/><i/><i/></div>}{post && <ReadingArticle post={post} repositoryName={workspace?.repository.name ?? ''} categories={workspace?.categories??[]} lang={lang} onTag={(tag)=>{updateStored({activity:'search',query:`tag:${tag}`});setMobileLeft(true);}} onNavigate={navigateArticleLink}/>} {readingIssue && post && <div className="reading-notice" role="status"><Icon name="file"/><span>{issueMessage}</span><button onClick={() => setReadingIssue(null)} aria-label={t(lang, 'dismiss')}><Icon name="close"/></button></div>}{!loading && !post && <div className="empty-reading"><Icon name="file"/><h1>{readingIssue?.kind === 'not-found' ? t(lang, 'fileMissing') : readingIssue ? t(lang, 'unableToLoad') : workspace?.posts.length ? t(lang, 'selectArticle') : t(lang, 'emptyRepository')}</h1>{issueMessage && <p>{issueMessage}</p>}</div>}</div>
     </main>
-    <aside className={`right-sidebar ${mobileRight ? 'mobile-open' : ''}`}>
+    <aside className={`right-sidebar ${mobileRight ? 'mobile-open' : ''}`}>{!stored.rightCollapsed && resizeHandle('right')}
       <nav className="right-tools"><ToolbarButton label={t(lang, 'outline')} active={stored.rightTool === 'outline' && !stored.rightCollapsed} onClick={() => selectRightTool('outline')}><Icon name="outline"/></ToolbarButton><ToolbarButton label={t(lang, 'properties')} active={stored.rightTool === 'properties' && !stored.rightCollapsed} onClick={() => selectRightTool('properties')}><Icon name="properties"/></ToolbarButton><ToolbarButton label={t(lang, 'backlinks')} active={stored.rightTool === 'backlinks' && !stored.rightCollapsed} onClick={() => selectRightTool('backlinks')}><Icon name="backlinks"/></ToolbarButton></nav>
       <section className="right-panel">{stored.rightTool === 'outline' && <><h2>{t(lang, 'outline')}</h2><nav className="outline-list">{outline.map((heading) => <a key={heading.id} href={`#${heading.id}`} data-active={heading.id === activeHeading || undefined} aria-current={heading.id === activeHeading ? 'location' : undefined} style={{ '--level': heading.level } as React.CSSProperties}>{heading.text}</a>)}</nav></>}{stored.rightTool === 'properties' && <><h2>{t(lang, 'properties')}</h2>{post && <dl className="property-list"><dt>{t(lang, 'repository')}</dt><dd>{workspace?.repository.name}</dd><dt>{t(lang, 'category')}</dt><dd>{categoryPath(post.categoryId,workspace?.categories??[]).join(' / ') || t(lang, 'repositoryRoot')}</dd><dt>{t(lang, 'language')}</dt><dd>{formatLanguage(post.language, lang)}</dd><dt>{t(lang, 'firstPublished')}</dt><dd>{post.firstPublishedAt?.slice(0,10)}</dd><dt>{t(lang, 'lastUpdated')}</dt><dd>{post.lastPublishedAt?.slice(0,10)}</dd><dt>{t(lang, 'tags')}</dt><dd>{post.tags.join(' · ') || '—'}</dd><dt>{t(lang, 'wordCount')}</dt><dd>{post.wordCount}</dd>{Object.entries(post.customProperties).map(([key,value]) => <><dt key={`${key}-k`}>{key}</dt><dd key={`${key}-v`}>{String(value)}</dd></>)}</dl>}</>}{stored.rightTool === 'backlinks' && <><h2>{t(lang, 'backlinks')} <small>{post?.backlinks.length ?? 0}</small></h2><div className="backlink-list">{post?.backlinks.map((link) => <a href={link.url} key={link.postId}><strong>{link.title}</strong><span>{link.repositoryName}</span></a>)}</div></>}</section>
       <div className="reading-progress" title="0%" role="progressbar" aria-label={t(lang, 'readingProgress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i ref={progressRef}/></div>
