@@ -10,6 +10,9 @@ describe('无 JavaScript HTML 与 SEO 出口', () => {
     const root = await workerRequest('/', { redirect: 'manual' });
     expect(root.status).toBe(200);
     expect(root.headers.get('location')).toBeNull();
+    const csp = root.headers.get('content-security-policy') ?? '';
+    expect(csp).toMatch(/script-src [^;]*https:\/\/static\.cloudflareinsights\.com/);
+    expect(csp).toMatch(/connect-src [^;]*https:\/\/cloudflareinsights\.com/);
     const html = await root.text();
     expect(html).toContain('window.__BLOG_BOOTSTRAP__');
     expect(html).toContain('<link rel="canonical" href="https://blog.ysoseri.us">');
